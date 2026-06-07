@@ -35,6 +35,7 @@ from mini_agent.tools.base import Tool
 from mini_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
 from mini_agent.tools.file_tools import EditTool, ReadTool, WriteTool
 from mini_agent.tools.mcp_loader import cleanup_mcp_connections, load_mcp_tools_async, set_mcp_timeout_config
+from mini_agent.tools.memory_manager import MemoryManager
 from mini_agent.tools.note_tool import SessionNoteTool
 from mini_agent.tools.skill_tool import create_skill_tools
 from mini_agent.utils import calculate_display_width
@@ -577,6 +578,13 @@ async def run_agent(workspace_dir: Path, task: str = None):
     # 4. Add workspace-dependent tools
     add_workspace_tools(tools, config, workspace_dir)
 
+    # 4.5 Initialize persistent memory system
+    memory_context = ""
+    if config.tools.enable_memory:
+        memory_manager = MemoryManager(workspace_dir)
+        memory_context = memory_manager.initialize_memory()
+        print(f"{Colors.GREEN}✅ Loaded memory system (dir: {memory_manager.memory_dir}){Colors.RESET}")
+
     # 5. Load System Prompt (with priority search)
     system_prompt_path = Config.find_config_file(config.agent.system_prompt_path)
     if system_prompt_path and system_prompt_path.exists():
@@ -607,6 +615,7 @@ async def run_agent(workspace_dir: Path, task: str = None):
         tools=tools,
         max_steps=config.agent.max_steps,
         workspace_dir=str(workspace_dir),
+        memory_context=memory_context,
     )
 
     # 8. Display welcome information

@@ -53,6 +53,7 @@ class Agent:
         max_steps: int = 50,
         workspace_dir: str = "./workspace",
         token_limit: int = 80000,  # Summary triggered when tokens exceed this value
+        memory_context: str = "",
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -69,6 +70,10 @@ class Agent:
         if "Current Workspace" not in system_prompt:
             workspace_info = f"\n\n## Current Workspace\nYou are currently working in: `{self.workspace_dir.absolute()}`\nAll relative paths will be resolved relative to this directory."
             system_prompt = system_prompt + workspace_info
+
+        # Inject persistent memory context into system prompt
+        if memory_context:
+            system_prompt = system_prompt + "\n\n" + memory_context
 
         self.system_prompt = system_prompt
 
