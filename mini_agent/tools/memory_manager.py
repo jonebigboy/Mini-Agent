@@ -5,6 +5,7 @@ Inspired by Claude Code's memory system.
 """
 
 import hashlib
+import subprocess
 from pathlib import Path
 
 
@@ -16,28 +17,49 @@ class MemoryManager:
             MEMORY.md         # Main memory index (auto-loaded, first 200 lines)
             <topic>.md        # Topic-specific files (on-demand via file tools)
 
-    Also loads project instructions from:
-        <workspace>/MINI_AGENT.md
+    Also loads instructions from (in priority order):
+        ~/.mini-agent/MINI_AGENT.md          # Global user preferences (all projects)
+        <workspace>/MINI_AGENT.md            # Project-specific instructions
+        <memory_dir>/MEMORY.md               # Auto-saved memory index
     """
 
     MAX_INDEX_LINES = 200
     PROJECT_INSTRUCTION_FILENAME = "MINI_AGENT.md"
+    GLOBAL_INSTRUCTION_FILE = Path.home() / ".mini-agent" / "MINI_AGENT.md"
 
     def __init__(self, workspace_dir: str | Path):
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.project_root = self._find_project_root()
         self.memory_dir = self._resolve_memory_dir()
+
+    def _find_project_root(self) -> Path:
+        """Find the project root by looking for a git repo.
+
+        Walks up from workspace_dir to find a .git directory.
+        Falls back to workspace_dir if not in a git repo.
+        """
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=str(self.workspace_dir),
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                return Path(result.stdout.strip())
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+        return self.workspace_dir
 
     def _resolve_memory_dir(self) -> Path:
         """Resolve the per-project memory directory.
 
+        Uses project_root (git repo root or workspace_dir) as the identity key.
         Path: ~/.mini-agent/projects/<name>_<hash8>/memory/
-        Name is derived from the last path component for readability.
-        Hash (first 8 chars of SHA256) prevents collisions between paths
-        like /Users/jone/my_project and /Users/jone_my/project.
-        Example: /Users/jone/Mini-Agent -> Mini-Agent_a1b2c3d4/memory/
         """
-        path_str = str(self.workspace_dir)
-        name = self.workspace_dir.name or "root"
+        path_str = str(self.project_root)
+        name = self.project_root.name or "root"
         hash8 = hashlib.sha256(path_str.encode()).hexdigest()[:8]
         return Path.home() / ".mini-agent" / "projects" / f"{name}_{hash8}" / "memory"
 
@@ -69,22 +91,38 @@ class MemoryManager:
         return truncated
 
     def load_project_instructions(self) -> str | None:
-        """Load MINI_AGENT.md from workspace root.
+        """Load MINI_AGENT.md from project root (git repo root or workspace_dir).
 
         Returns None if file doesn't exist.
         """
-        instruction_file = self.workspace_dir / self.PROJECT_INSTRUCTION_FILENAME
+        instruction_file = self.project_root / self.PROJECT_INSTRUCTION_FILENAME
         if not instruction_file.exists():
             return None
         return instruction_file.read_text(encoding="utf-8")
 
+    def load_global_instructions(self) -> str | None:
+        """Load MINI_AGENT.md from ~/.mini-agent/ (global user preferences).
+
+        Returns None if file doesn't exist.
+        """
+        if not self.GLOBAL_INSTRUCTION_FILE.exists():
+            return None
+        return self.GLOBAL_INSTRUCTION_FILE.read_text(encoding="utf-8")
+
     def build_memory_context(self) -> str:
         """Build the full memory context string for injection into system prompt.
 
-        Combines project instructions (MINI_AGENT.md) and memory index (MEMORY.md).
-        Returns empty string if neither exists.
+        Combines global instructions, project instructions, and memory index.
+        Returns empty string if none exist.
         """
         parts = []
+
+        global_instructions = self.load_global_instructions()
+        if global_instructions:
+            parts.append(
+                "## Global User Preferences (from ~/.mini-agent/MINI_AGENT.md)\n\n"
+                f"{global_instructions}"
+            )
 
         instructions = self.load_project_instructions()
         if instructions:
