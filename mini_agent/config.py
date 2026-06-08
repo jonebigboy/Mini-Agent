@@ -66,12 +66,24 @@ class ToolsConfig(BaseModel):
     mcp: MCPConfig = Field(default_factory=MCPConfig)
 
 
+class SecurityConfig(BaseModel):
+    """Security configuration"""
+
+    mode: str = "workspace-write"
+    non_interactive_fallback: str = "deny"
+    rules_file: str = "~/.mini-agent/security_rules.json"
+    extra_allow: list[str] = []
+    extra_deny: list[str] = []
+    extra_confirm: list[str] = []
+
+
 class Config(BaseModel):
     """Main configuration class"""
 
     llm: LLMConfig
     agent: AgentConfig
     tools: ToolsConfig
+    security: SecurityConfig = Field(default_factory=SecurityConfig)
 
     @classmethod
     def load(cls) -> "Config":
@@ -161,10 +173,22 @@ class Config(BaseModel):
             mcp=mcp_config,
         )
 
+        # Parse security configuration
+        security_data = data.get("security", {})
+        security_config = SecurityConfig(
+            mode=security_data.get("mode", "workspace-write"),
+            non_interactive_fallback=security_data.get("non_interactive_fallback", "deny"),
+            rules_file=security_data.get("rules_file", "~/.mini-agent/security_rules.json"),
+            extra_allow=security_data.get("extra_allow", []),
+            extra_deny=security_data.get("extra_deny", []),
+            extra_confirm=security_data.get("extra_confirm", []),
+        )
+
         return cls(
             llm=llm_config,
             agent=agent_config,
             tools=tools_config,
+            security=security_config,
         )
 
     @staticmethod

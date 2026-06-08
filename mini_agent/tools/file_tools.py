@@ -1,11 +1,16 @@
 """File operation tools."""
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import tiktoken
 
 from .base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from mini_agent.security.middleware import SecurityMiddleware
 
 
 def truncate_text_by_tokens(
@@ -155,13 +160,15 @@ class ReadTool(Tool):
 class WriteTool(Tool):
     """Write content to a file."""
 
-    def __init__(self, workspace_dir: str = "."):
+    def __init__(self, workspace_dir: str = ".", security: SecurityMiddleware | None = None):
         """Initialize WriteTool with workspace directory.
 
         Args:
             workspace_dir: Base directory for resolving relative paths
+            security: Optional security middleware for file operation checks
         """
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.security = security
 
     @property
     def name(self) -> str:
@@ -200,6 +207,12 @@ class WriteTool(Tool):
             if not file_path.is_absolute():
                 file_path = self.workspace_dir / file_path
 
+            # Security check
+            if self.security:
+                decision = await self.security.check_file_operation("write", str(file_path))
+                if not decision.allowed:
+                    return ToolResult(success=False, error=f"操作被安全策略拒绝: {decision.reason}")
+
             # Create parent directories if they don't exist
             file_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -212,13 +225,15 @@ class WriteTool(Tool):
 class EditTool(Tool):
     """Edit file by replacing text."""
 
-    def __init__(self, workspace_dir: str = "."):
+    def __init__(self, workspace_dir: str = ".", security: SecurityMiddleware | None = None):
         """Initialize EditTool with workspace directory.
 
         Args:
             workspace_dir: Base directory for resolving relative paths
+            security: Optional security middleware for file operation checks
         """
         self.workspace_dir = Path(workspace_dir).absolute()
+        self.security = security
 
     @property
     def name(self) -> str:
@@ -267,6 +282,12 @@ class EditTool(Tool):
                     content="",
                     error=f"File not found: {path}",
                 )
+
+            # Security check
+            if self.security:
+                decision = await self.security.check_file_operation("edit", str(file_path))
+                if not decision.allowed:
+                    return ToolResult(success=False, error=f"操作被安全策略拒绝: {decision.reason}")
 
             content = file_path.read_text(encoding="utf-8")
 

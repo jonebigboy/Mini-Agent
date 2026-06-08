@@ -3,16 +3,21 @@
 Supports both bash (Unix/Linux/macOS) and PowerShell (Windows).
 """
 
+from __future__ import annotations
+
 import asyncio
 import platform
 import re
 import time
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
 
 from .base import Tool, ToolResult
+
+if TYPE_CHECKING:
+    from mini_agent.security.middleware import SecurityMiddleware
 
 
 class BashOutputResult(ToolResult):
@@ -222,17 +227,19 @@ class BashTool(Tool):
     - Unix/Linux/macOS: bash
     """
 
-    def __init__(self, workspace_dir: str | None = None):
+    def __init__(self, workspace_dir: str | None = None, security: SecurityMiddleware | None = None):
         """Initialize BashTool with OS-specific shell detection.
 
         Args:
             workspace_dir: Working directory for command execution.
                            If provided, all commands run in this directory.
                            If None, commands run in the process's cwd.
+            security: Optional security middleware for command checks.
         """
         self.is_windows = platform.system() == "Windows"
         self.shell_name = "PowerShell" if self.is_windows else "bash"
         self.workspace_dir = workspace_dir
+        self.security = security
 
     @property
     def name(self) -> str:
@@ -323,6 +330,19 @@ Examples:
             BashExecutionResult with command output and status
         """
 
+        # Security check
+        decision = None
+        if self.security:
+            decision = await self.security.check_command(command)
+            if not decision.allowed:
+                return BashOutputResult(
+                    success=False,
+                    error=f"命令被安全策略拒绝: {decision.reason}",
+                    stdout="",
+                    stderr="",
+                    exit_code=-1,
+                )
+
         try:
             # Validate timeout
             if timeout > 600:
@@ -338,6 +358,8 @@ Examples:
                 # Unix/Linux/macOS: Use bash
                 shell_cmd = command
 
+            env = decision.env if decision else None
+
             if run_in_background:
                 # Background execution: Create isolated process
                 bash_id = str(uuid.uuid4())[:8]
@@ -349,6 +371,7 @@ Examples:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=self.workspace_dir,
+                        env=env,
                     )
                 else:
                     process = await asyncio.create_subprocess_shell(
@@ -356,6 +379,7 @@ Examples:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.STDOUT,
                         cwd=self.workspace_dir,
+                        env=env,
                     )
 
                 # Create background shell and add to manager
@@ -386,6 +410,7 @@ Examples:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=self.workspace_dir,
+                        env=env,
                     )
                 else:
                     process = await asyncio.create_subprocess_shell(
@@ -393,6 +418,7 @@ Examples:
                         stdout=asyncio.subprocess.PIPE,
                         stderr=asyncio.subprocess.PIPE,
                         cwd=self.workspace_dir,
+                        env=env,
                     )
 
                 try:

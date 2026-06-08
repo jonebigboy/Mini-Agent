@@ -39,6 +39,7 @@ from mini_agent.tools.memory_manager import MemoryManager
 from mini_agent.tools.note_tool import SessionNoteTool
 from mini_agent.tools.skill_tool import create_skill_tools
 from mini_agent.utils import calculate_display_width
+from mini_agent.security import SecurityMiddleware
 
 
 # ANSI color codes
@@ -432,7 +433,8 @@ async def initialize_base_tools(config: Config):
     return tools, skill_loader
 
 
-def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path):
+def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path,
+                        security: SecurityMiddleware | None = None):
     """Add workspace-dependent tools
 
     These tools need to know the workspace directory.
@@ -441,13 +443,14 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path):
         tools: Existing tools list to add to
         config: Configuration object
         workspace_dir: Workspace directory path
+        security: Optional security middleware for tool checks
     """
     # Ensure workspace directory exists
     workspace_dir.mkdir(parents=True, exist_ok=True)
 
     # Bash tool - needs workspace as cwd for command execution
     if config.tools.enable_bash:
-        bash_tool = BashTool(workspace_dir=str(workspace_dir))
+        bash_tool = BashTool(workspace_dir=str(workspace_dir), security=security)
         tools.append(bash_tool)
         print(f"{Colors.GREEN}✅ Loaded Bash tool (cwd: {workspace_dir}){Colors.RESET}")
 
@@ -456,8 +459,8 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path):
         tools.extend(
             [
                 ReadTool(workspace_dir=str(workspace_dir)),
-                WriteTool(workspace_dir=str(workspace_dir)),
-                EditTool(workspace_dir=str(workspace_dir)),
+                WriteTool(workspace_dir=str(workspace_dir), security=security),
+                EditTool(workspace_dir=str(workspace_dir), security=security),
             ]
         )
         print(f"{Colors.GREEN}✅ Loaded file operation tools (workspace: {workspace_dir}){Colors.RESET}")
@@ -575,8 +578,11 @@ async def run_agent(workspace_dir: Path, task: str = None):
     # 3. Initialize base tools (independent of workspace)
     tools, skill_loader = await initialize_base_tools(config)
 
+    # 3.5. Create security middleware
+    security = SecurityMiddleware(config.security, str(workspace_dir), interactive=(task is None))
+
     # 4. Add workspace-dependent tools
-    add_workspace_tools(tools, config, workspace_dir)
+    add_workspace_tools(tools, config, workspace_dir, security)
 
     # 4.5 Initialize persistent memory system
     memory_context = ""
