@@ -60,3 +60,6 @@ docs/assets/preview.html
 CLAUDE.md
 
 .agent_memory.json
+
+# Worktrees
+.worktrees/
