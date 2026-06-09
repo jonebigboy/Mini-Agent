@@ -1,39 +1,16 @@
-"""Interactive user confirmation and rule persistence."""
+"""Persistent rule storage for user-confirmed commands."""
 
 import json
 from datetime import datetime
-from enum import Enum
 from pathlib import Path
 
 
-class ConfirmResult(Enum):
-    """User confirmation result."""
-
-    ALLOW = "allow"
-    DENY = "deny"
-    ALWAYS = "always"
-
-
 class UserConfirmation:
-    """Handle user confirmation prompts and persistent rule storage."""
+    """Handle persistent rule storage for confirmed commands."""
 
     def __init__(self, rules_path: str):
         self.rules_path = Path(rules_path).expanduser()
         self.user_rules = self._load_rules()
-
-    async def confirm(self, command: str, reason: str) -> ConfirmResult:
-        """Display confirmation prompt and wait for user input.
-
-        Uses input() instead of prompt_toolkit to avoid coupling.
-        """
-        print(f"\n⚠️  危险命令检测: {command}")
-        print(f"原因: {reason}")
-        choice = input("[y] 执行一次  [n] 拒绝  [a] 始终允许此类命令 > ").strip().lower()
-        if choice == "a":
-            return ConfirmResult.ALWAYS
-        elif choice == "y":
-            return ConfirmResult.ALLOW
-        return ConfirmResult.DENY
 
     def add_permanent_rule(self, pattern: str):
         """Add a permanent allow rule and persist to disk."""

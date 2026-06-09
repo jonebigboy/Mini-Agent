@@ -824,10 +824,42 @@ async def run_agent(workspace_dir: Path, task: str = None):
             try:
                 agent_task = asyncio.create_task(agent.run())
 
-                # Poll for cancellation while agent runs
+                # Poll for cancellation and confirmation while agent runs
                 while not agent_task.done():
                     if esc_cancelled[0]:
                         cancel_event.set()
+
+                    # Check if agent is paused for confirmation
+                    if agent.confirmation_request is not None:
+                        # Stop Esc listener to free stdin for prompt_toolkit
+                        esc_listener_stop.set()
+                        esc_thread.join(timeout=0.3)
+
+                        req = agent.confirmation_request
+                        print(f"\n⚠️  危险命令检测: {req.command}")
+                        print(f"原因: {req.reason}")
+
+                        # Use prompt_toolkit for confirmation input
+                        try:
+                            choice = await session.prompt_async(
+                                "[y] 执行一次  [n] 拒绝  [a] 始终允许此类命令 > "
+                            )
+                            choice = choice.strip().lower()
+                        except KeyboardInterrupt:
+                            choice = ""
+
+                        if choice == "a":
+                            agent.resolve_confirmation("always")
+                        elif choice == "y":
+                            agent.resolve_confirmation("yes")
+                        else:
+                            agent.resolve_confirmation(None)
+
+                        # Restart Esc listener after confirmation
+                        esc_listener_stop = threading.Event()
+                        esc_thread = threading.Thread(target=esc_key_listener, daemon=True)
+                        esc_thread.start()
+
                     await asyncio.sleep(0.1)
 
                 # Get result

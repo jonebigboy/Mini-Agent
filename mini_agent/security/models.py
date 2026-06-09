@@ -23,3 +23,4 @@ class SecurityDecision:
     reason: str = ""
     command: str = ""
     env: dict = field(default_factory=dict)
+    needs_confirmation: bool = False

@@ -11,7 +11,7 @@ import tiktoken
 from .llm import LLMClient
 from .logger import AgentLogger
 from .schema import Message
-from .tools.base import Tool, ToolResult
+from .tools.base import ConfirmationRequired, Tool, ToolResult
 from .utils import calculate_display_width
 
 
@@ -87,6 +87,11 @@ class Agent:
         self.api_total_tokens: int = 0
         # Flag to skip token check right after summary (avoid consecutive triggers)
         self._skip_next_token_check: bool = False
+
+        # Confirmation pause/resume state (used by CLI layer)
+        self.confirmation_request: ConfirmationRequired | None = None
+        self._confirmation_event = asyncio.Event()
+        self._confirmation_result: str | None = None  # "yes", "always", or None (deny)
 
     def add_user_message(self, content: str):
         """Add a user message to history."""
@@ -466,6 +471,9 @@ Requirements:
                     try:
                         tool = self.tools[function_name]
                         result = await tool.execute(**arguments)
+                    except ConfirmationRequired as e:
+                        # Pause and wait for CLI to handle confirmation
+                        result = await self._wait_for_confirmation(e, tool, arguments)
                     except Exception as e:
                         # Catch all exceptions during tool execution, convert to failed ToolResult
                         import traceback
@@ -522,6 +530,58 @@ Requirements:
         error_msg = f"Task couldn't be completed after {self.max_steps} steps."
         print(f"\n{Colors.BRIGHT_YELLOW}⚠️  {error_msg}{Colors.RESET}")
         return error_msg
+
+    async def _wait_for_confirmation(
+        self, req: ConfirmationRequired, tool: Tool, arguments: dict
+    ) -> ToolResult:
+        """Pause execution and wait for CLI to resolve the confirmation request.
+
+        Returns the tool execution result after confirmation is resolved.
+        """
+        self.confirmation_request = req
+        self._confirmation_event.clear()
+        print(f"\n{Colors.BRIGHT_YELLOW}⏸️  等待用户确认...{Colors.RESET}")
+
+        # Wait until CLI calls resolve_confirmation()
+        await self._confirmation_event.wait()
+
+        request = self.confirmation_request
+        result_text = self._confirmation_result
+        self.confirmation_request = None
+        self._confirmation_result = None
+
+        if result_text is None:
+            # User denied
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"用户拒绝执行: {request.command}",
+            )
+
+        # User confirmed — apply and re-execute
+        if hasattr(tool, "security") and tool.security:
+            always = result_text == "always"
+            tool.security.apply_confirmation(request.command, always=always)
+
+        try:
+            return await tool.execute(**arguments)
+        except Exception as e:
+            import traceback
+
+            return ToolResult(
+                success=False,
+                content="",
+                error=f"Tool execution failed: {type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+            )
+
+    def resolve_confirmation(self, result: str | None):
+        """Called by CLI to resume agent after user confirmation.
+
+        Args:
+            result: "yes", "always", or None (deny)
+        """
+        self._confirmation_result = result
+        self._confirmation_event.set()
 
     def get_history(self) -> list[Message]:
         """Get message history."""

@@ -2,7 +2,7 @@
 
 import json
 
-from mini_agent.security.confirm import ConfirmResult, UserConfirmation
+from mini_agent.security.confirm import UserConfirmation
 
 
 class TestRulePersistence:
@@ -41,14 +41,3 @@ class TestRulePersistence:
         rules_file.write_text("not json")
         uc = UserConfirmation(str(rules_file))
         assert uc.user_rules == []
-
-
-class TestConfirmResult:
-    def test_confirm_allow(self):
-        assert ConfirmResult.ALLOW.value == "allow"
-
-    def test_confirm_deny(self):
-        assert ConfirmResult.DENY.value == "deny"
-
-    def test_confirm_always(self):
-        assert ConfirmResult.ALWAYS.value == "always"

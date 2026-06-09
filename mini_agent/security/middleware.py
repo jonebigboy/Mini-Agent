@@ -5,7 +5,7 @@ from pathlib import Path
 
 from mini_agent.config import SecurityConfig
 from mini_agent.security.classifier import CommandClassifier
-from mini_agent.security.confirm import ConfirmResult, UserConfirmation
+from mini_agent.security.confirm import UserConfirmation
 from mini_agent.security.models import RiskLevel, SecurityDecision
 
 
@@ -29,6 +29,8 @@ class SecurityMiddleware:
         )
         self.confirmation = UserConfirmation(security_config.rules_file)
         self._clean_env = self._sanitize_env()
+        # 本次会话中已确认过的命令（"执行一次" 用，不持久化）
+        self._session_allowed: set[str] = set()
 
     async def check_command(self, command: str) -> SecurityDecision:
         """Check if a shell command is allowed to execute."""
@@ -40,17 +42,36 @@ class SecurityMiddleware:
             return SecurityDecision(allowed=False, reason=reason)
 
         if risk == RiskLevel.CONFIRM:
+            # 本次会话已确认过的命令直接放行
+            if command in self._session_allowed:
+                self._session_allowed.discard(command)
+                return SecurityDecision(allowed=True, command=command, env=self._clean_env)
             if not self.interactive:
                 if self.non_interactive_fallback == "deny":
                     return SecurityDecision(allowed=False, reason=f"[非交互模式] {reason}")
                 # fallback="allow" → fall through to allow
             else:
-                result = await self.confirmation.confirm(command, reason)
-                if result == ConfirmResult.DENY:
-                    return SecurityDecision(allowed=False, reason="用户拒绝执行")
-                if result == ConfirmResult.ALWAYS:
-                    self.confirmation.add_permanent_rule(command)
+                # 不再在此处调用 input()，返回 needs_confirmation 让上层处理
+                return SecurityDecision(
+                    allowed=False,
+                    reason=reason,
+                    command=command,
+                    needs_confirmation=True,
+                )
 
+        return SecurityDecision(allowed=True, command=command, env=self._clean_env)
+
+    def apply_confirmation(self, command: str, always: bool = False) -> SecurityDecision:
+        """用户确认后调用，放行命令的下次执行。
+
+        Args:
+            command: 被确认的命令
+            always: 如果为 True，添加永久规则；否则仅本次放行一次
+        """
+        if always:
+            self.confirmation.add_permanent_rule(command)
+        else:
+            self._session_allowed.add(command)
         return SecurityDecision(allowed=True, command=command, env=self._clean_env)
 
     async def check_file_operation(self, operation: str, path: str) -> SecurityDecision:

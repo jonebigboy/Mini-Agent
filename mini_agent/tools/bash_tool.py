@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import Field, model_validator
 
-from .base import Tool, ToolResult
+from .base import ConfirmationRequired, Tool, ToolResult
 
 if TYPE_CHECKING:
     from mini_agent.security.middleware import SecurityMiddleware
@@ -335,6 +335,8 @@ Examples:
         if self.security:
             decision = await self.security.check_command(command)
             if not decision.allowed:
+                if decision.needs_confirmation:
+                    raise ConfirmationRequired(command, decision.reason)
                 return BashOutputResult(
                     success=False,
                     error=f"命令被安全策略拒绝: {decision.reason}",

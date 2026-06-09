@@ -5,6 +5,15 @@ from typing import Any
 from pydantic import BaseModel
 
 
+class ConfirmationRequired(Exception):
+    """Raised when a tool needs user confirmation before executing."""
+
+    def __init__(self, command: str, reason: str):
+        self.command = command
+        self.reason = reason
+        super().__init__(f"需要用户确认: {command} ({reason})")
+
+
 class ToolResult(BaseModel):
     """Tool execution result."""
 
