@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from mini_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, BashOutputTool, BashTool
+from mini_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, BashOutputResult, BashOutputTool, BashTool
 
 
 @pytest.mark.asyncio
@@ -23,15 +23,17 @@ async def test_foreground_command():
 
 @pytest.mark.asyncio
 async def test_foreground_command_with_stderr():
-    """Test command that outputs to both stdout and stderr."""
-    print("\n=== Testing Stdout/Stderr Separation ===")
+    """Test command that outputs to both stdout and stderr (merged in streaming)."""
+    print("\n=== Testing Stdout/Stderr Merged in Streaming ===")
 
     bash_tool = BashTool()
     result = await bash_tool.execute(command="echo 'stdout message' && echo 'stderr message' >&2")
 
     assert result.success
     assert "stdout message" in result.stdout
-    assert "stderr message" in result.stderr
+    # Streaming merges stderr into stdout, so stderr is empty
+    assert "stderr message" in result.stdout
+    assert result.stderr == ""
     print(f"Stdout: {result.stdout}")
     print(f"Stderr: {result.stderr}")
 
@@ -52,7 +54,7 @@ async def test_command_failure():
 
 @pytest.mark.asyncio
 async def test_command_timeout():
-    """Test command timeout."""
+    """Test command absolute timeout."""
     print("\n=== Testing Command Timeout ===")
 
     bash_tool = BashTool()
@@ -270,3 +272,172 @@ async def test_timeout_validation():
     result = await bash_tool.execute(command="echo 'test'", timeout=0)
     assert result.success
     print("Timeout < 1 handled correctly")
+
+
+# === Server Detection Tests ===
+
+
+def test_is_server_output():
+    """Test that server output patterns are detected."""
+    bash_tool = BashTool()
+    assert bash_tool._is_server_output("Serving on localhost:8080")
+    assert bash_tool._is_server_output("Uvicorn running on http://127.0.0.1:8000")
+    assert bash_tool._is_server_output("webpack successfully compiled")
+    assert bash_tool._is_server_output("Server running at 0.0.0.0:3000")
+    assert bash_tool._is_server_output("Ready for connections")
+    assert not bash_tool._is_server_output("echo hello")
+    assert not bash_tool._is_server_output("pip install torch")
+    assert not bash_tool._is_server_output("")
+
+
+# === Output Truncation Tests ===
+
+
+def test_truncate_output_short():
+    """Short output should not be truncated."""
+    bash_tool = BashTool()
+    text = "Hello world"
+    assert bash_tool._truncate_output(text) == "Hello world"
+
+
+def test_truncate_output_exact_limit():
+    """Output at exactly 30000 chars should not be truncated."""
+    bash_tool = BashTool()
+    text = "x" * 30000
+    assert bash_tool._truncate_output(text) == text
+
+
+def test_truncate_output_over_limit():
+    """Output over 30000 chars should be truncated to head + tail."""
+    bash_tool = BashTool()
+    text = "A" * 10001 + "B" * 10000 + "C" * 10000  # 30001 chars
+    result = bash_tool._truncate_output(text)
+    assert len(result) < len(text)
+    assert result.startswith("A" * 10000)
+    assert result.endswith("C" * 10000)
+    assert "characters truncated" in result
+
+
+def test_truncate_output_multiline():
+    """Truncation should work correctly with multiline output."""
+    bash_tool = BashTool()
+    lines = [f"Line {i}: " + "x" * 100 for i in range(400)]  # ~40000+ chars
+    text = "\n".join(lines)
+    result = bash_tool._truncate_output(text)
+    assert len(result) < len(text)
+    assert result.startswith("Line 0:")
+    assert "truncated" in result
+
+
+# === _execute_streaming Tests ===
+
+
+@pytest.mark.asyncio
+async def test_execute_streaming_success():
+    """Test that streaming execution runs and returns output correctly."""
+    bash_tool = BashTool()
+    result = await bash_tool._execute_streaming(
+        command="echo 'hello from streaming'",
+        timeout=30,
+    )
+    assert isinstance(result, BashOutputResult)
+    assert result.success
+    assert "hello from streaming" in result.stdout
+
+
+@pytest.mark.asyncio
+async def test_execute_streaming_failure():
+    """Test that streaming reports failure for non-zero exit codes."""
+    bash_tool = BashTool()
+    result = await bash_tool._execute_streaming(
+        command="exit 42",
+        timeout=30,
+    )
+    assert isinstance(result, BashOutputResult)
+    assert not result.success
+    assert result.exit_code == 42
+    assert result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_execute_streaming_captures_multiline():
+    """Test that streaming captures multiple lines of output."""
+    bash_tool = BashTool()
+    result = await bash_tool._execute_streaming(
+        command="echo 'line1' && echo 'line2' && echo 'line3'",
+        timeout=30,
+    )
+    assert result.success
+    assert "line1" in result.stdout
+    assert "line2" in result.stdout
+    assert "line3" in result.stdout
+
+
+# === Dual Timeout Tests ===
+
+
+@pytest.mark.asyncio
+async def test_streaming_idle_timeout():
+    """Test that streaming kills command after idle_timeout with no output."""
+    bash_tool = BashTool()
+    # sleep produces no output — should trigger idle timeout
+    result = await bash_tool._execute_streaming(
+        command="sleep 100",
+        timeout=600,
+        idle_timeout=2.0,
+    )
+    assert not result.success
+    assert "idle timeout" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_streaming_absolute_timeout():
+    """Test that streaming kills command after absolute timeout."""
+    bash_tool = BashTool()
+    # Command produces output every 0.5s, so idle timeout won't trigger
+    # But absolute timeout of 2s will
+    result = await bash_tool._execute_streaming(
+        command="for i in $(seq 1 100); do echo tick; sleep 0.5; done",
+        timeout=3,
+        idle_timeout=60.0,
+    )
+    assert not result.success
+    assert "timed out" in result.error.lower()
+
+
+@pytest.mark.asyncio
+async def test_streaming_active_command_survives():
+    """Test that an actively-outputting command is NOT killed by idle timeout."""
+    bash_tool = BashTool()
+    # Produces output every 0.3s for ~1.5s total, idle_timeout=1s
+    result = await bash_tool._execute_streaming(
+        command="for i in 1 2 3 4 5; do echo line$i; sleep 0.3; done",
+        timeout=30,
+        idle_timeout=2.0,
+    )
+    assert result.success
+    assert "line5" in result.stdout
+
+
+# === Integration Tests ===
+
+
+@pytest.mark.asyncio
+async def test_all_commands_use_streaming():
+    """Test that all foreground commands now use streaming (unified path)."""
+    bash_tool = BashTool()
+    result = await bash_tool.execute(
+        command="pip install --dry-run nonexistent-pkg-xyz-12345 || echo 'done'"
+    )
+    assert result.success
+    assert len(result.stdout) > 0 or result.exit_code == 0
+
+
+@pytest.mark.asyncio
+async def test_short_command_unchanged():
+    """Test that short commands still work correctly via streaming."""
+    bash_tool = BashTool()
+    result = await bash_tool.execute(command="echo 'short command'")
+    assert result.success
+    assert "short command" in result.stdout
+    assert isinstance(result.stderr, str)

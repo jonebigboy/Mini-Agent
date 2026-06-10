@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import platform
+import os
 import re
 import time
 import uuid
@@ -18,6 +19,31 @@ from .base import ConfirmationRequired, Tool, ToolResult
 
 if TYPE_CHECKING:
     from mini_agent.security.middleware import SecurityMiddleware
+
+
+# Regex patterns that indicate a dev server has started.
+# When matched in output, the command is auto-promoted to background.
+SERVER_DETECTION_PATTERNS = [
+    r'localhost:\d+',
+    r'127\.0\.0\.1:\d+',
+    r'0\.0\.0\.0:\d+',
+    r'\[::\]:\d+',
+    r'Server running',
+    r'server started',
+    r'Listening on',
+    r'webpack.*compiled',
+    r'Development server running',
+    r'Uvicorn running',
+    r'Flask.*running',
+    r'Ready for connections',
+]
+
+# ANSI color constants for progress hints in _execute_streaming
+_C_RESET = "\033[0m"
+_C_DIM = "\033[2m"
+_C_BRIGHT_RED = "\033[91m"
+_C_BRIGHT_GREEN = "\033[92m"
+_C_BRIGHT_YELLOW = "\033[93m"
 
 
 class BashOutputResult(ToolResult):
@@ -241,6 +267,67 @@ class BashTool(Tool):
         self.workspace_dir = workspace_dir
         self.security = security
 
+    def _is_server_output(self, line: str) -> bool:
+        """Check if an output line indicates a dev server has started."""
+        if not line:
+            return False
+        for pattern in SERVER_DETECTION_PATTERNS:
+            if re.search(pattern, line, re.IGNORECASE):
+                return True
+        return False
+
+    def _truncate_output(self, text: str, max_chars: int = 30000, head_chars: int = 10000, tail_chars: int = 10000) -> str:
+        """Truncate output to prevent token overflow.
+
+        If text exceeds max_chars, keeps head_chars from the start and tail_chars from the end,
+        with a truncation notice in the middle.
+        """
+        if len(text) <= max_chars:
+            return text
+        head = text[:head_chars]
+        tail = text[-tail_chars:]
+        truncated_count = len(text) - head_chars - tail_chars
+        return f"{head}\n\n... [{truncated_count} characters truncated] ...\n\n{tail}"
+
+    async def _promote_to_background(
+        self,
+        process: asyncio.subprocess.Process,
+        command: str,
+        existing_output: list[str],
+        start_time: float,
+    ) -> BashOutputResult:
+        """Promote a running foreground process to background shell.
+
+        Called when server output is detected. Moves the process into
+        BackgroundShellManager so the agent can continue working.
+        """
+        bash_id = str(uuid.uuid4())[:8]
+
+        bg_shell = BackgroundShell(
+            bash_id=bash_id,
+            command=command,
+            process=process,
+            start_time=start_time,
+        )
+        for line in existing_output:
+            bg_shell.add_output(line)
+
+        BackgroundShellManager.add(bg_shell)
+        await BackgroundShellManager.start_monitor(bash_id)
+
+        elapsed = time.time() - start_time
+        print(f"   {_C_BRIGHT_YELLOW}🔄 检测到开发服务器，已转为后台运行 (bash_id={bash_id}, 耗时 {elapsed:.1f}s){_C_RESET}")
+
+        truncated = self._truncate_output("\n".join(existing_output))
+        return BashOutputResult(
+            success=True,
+            content=f"Dev server detected and moved to background (bash_id='{bash_id}').\n\nCommand: {command}\nBash ID: {bash_id}",
+            stdout=truncated,
+            stderr="",
+            exit_code=0,
+            bash_id=bash_id,
+        )
+
     @property
     def name(self) -> str:
         return "bash"
@@ -405,56 +492,8 @@ Examples:
                 )
 
             else:
-                # Foreground execution: Create isolated process
-                if self.is_windows:
-                    process = await asyncio.create_subprocess_exec(
-                        *shell_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=self.workspace_dir,
-                        env=env,
-                    )
-                else:
-                    process = await asyncio.create_subprocess_shell(
-                        shell_cmd,
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE,
-                        cwd=self.workspace_dir,
-                        env=env,
-                    )
-
-                try:
-                    stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout)
-                except asyncio.TimeoutError:
-                    process.kill()
-                    error_msg = f"Command timed out after {timeout} seconds"
-                    return BashOutputResult(
-                        success=False,
-                        error=error_msg,
-                        stdout="",
-                        stderr=error_msg,
-                        exit_code=-1,
-                    )
-
-                # Decode output
-                stdout_text = stdout.decode("utf-8", errors="replace")
-                stderr_text = stderr.decode("utf-8", errors="replace")
-
-                # Create result (content auto-formatted by model_validator)
-                is_success = process.returncode == 0
-                error_msg = None
-                if not is_success:
-                    error_msg = f"Command failed with exit code {process.returncode}"
-                    if stderr_text:
-                        error_msg += f"\n{stderr_text.strip()}"
-
-                return BashOutputResult(
-                    success=is_success,
-                    error=error_msg,
-                    stdout=stdout_text,
-                    stderr=stderr_text,
-                    exit_code=process.returncode or 0,
-                )
+                # All foreground commands use streaming execution
+                return await self._execute_streaming(command, timeout, env=env)
 
         except Exception as e:
             return BashOutputResult(
@@ -462,6 +501,150 @@ Examples:
                 error=str(e),
                 stdout="",
                 stderr=str(e),
+                exit_code=-1,
+            )
+
+    async def _execute_streaming(
+        self,
+        command: str,
+        timeout: int = 600,
+        idle_timeout: float = 60.0,
+        env: dict[str, str] | None = None,
+    ) -> BashOutputResult:
+        """Execute command with streaming output, dual timeout, and server detection.
+
+        All foreground commands use this path. Streams output in real-time,
+        enforces both idle timeout (no output) and absolute timeout,
+        and auto-promotes detected dev servers to background.
+        """
+        if env is None:
+            env = dict(os.environ)
+        env["PYTHONUNBUFFERED"] = "1"
+
+        if self.is_windows:
+            process = await asyncio.create_subprocess_exec(
+                "powershell.exe", "-NoProfile", "-Command", command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=self.workspace_dir,
+                env=env,
+            )
+        else:
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=self.workspace_dir,
+                env=env,
+            )
+
+        output_lines: list[str] = []
+        start_time = time.time()
+        last_output_time = start_time
+        last_hint_time = start_time
+        hint_interval = 5.0
+        poll_interval = 0.2
+
+        try:
+            while True:
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    process.kill()
+                    error_msg = f"Command timed out after {timeout} seconds"
+                    print(f"\n   {_C_BRIGHT_RED}{error_msg}{_C_RESET}")
+                    return BashOutputResult(
+                        success=False,
+                        error=error_msg,
+                        stdout="\n".join(output_lines),
+                        stderr="",
+                        exit_code=-1,
+                    )
+
+                try:
+                    line_bytes = await asyncio.wait_for(
+                        process.stdout.readline(), timeout=poll_interval
+                    )
+                    if line_bytes:
+                        line = line_bytes.decode("utf-8", errors="replace").rstrip("\n\r")
+                        output_lines.append(line)
+                        last_output_time = time.time()
+                        print(f"   {_C_DIM}{line}{_C_RESET}")
+
+                        # Auto-detect dev servers and promote to background
+                        if self._is_server_output(line):
+                            return await self._promote_to_background(
+                                process, command, output_lines, start_time
+                            )
+                    else:
+                        break
+                except asyncio.TimeoutError:
+                    pass
+
+                # Check idle timeout (no output for idle_timeout seconds)
+                if time.time() - last_output_time >= idle_timeout:
+                    process.kill()
+                    idle_elapsed = time.time() - last_output_time
+                    error_msg = f"Command idle timeout: no output for {idle_elapsed:.0f}s (limit: {idle_timeout}s)"
+                    print(f"\n   {_C_BRIGHT_RED}{error_msg}{_C_RESET}")
+                    return BashOutputResult(
+                        success=False,
+                        error=error_msg,
+                        stdout="\n".join(output_lines),
+                        stderr="",
+                        exit_code=-1,
+                    )
+
+                if process.returncode is not None:
+                    remaining = await process.stdout.read()
+                    if remaining:
+                        for line in remaining.decode("utf-8", errors="replace").splitlines():
+                            output_lines.append(line)
+                            print(f"   {_C_DIM}{line}{_C_RESET}")
+                    break
+
+                now = time.time()
+                if now - last_hint_time >= hint_interval and now - last_output_time >= hint_interval:
+                    elapsed_str = f"{now - start_time:.0f}"
+                    print(f"   {_C_BRIGHT_YELLOW}⏳ 仍在执行中... (已用时 {elapsed_str}s){_C_RESET}")
+                    last_hint_time = now
+
+            await process.wait()
+            exit_code = process.returncode
+
+            full_output = "\n".join(output_lines)
+            truncated_output = self._truncate_output(full_output)
+
+            is_success = exit_code == 0
+            elapsed = time.time() - start_time
+
+            if is_success:
+                print(f"   {_C_BRIGHT_GREEN}✓ 命令完成 (耗时 {elapsed:.1f}s){_C_RESET}")
+            else:
+                print(f"   {_C_BRIGHT_RED}✗ 命令失败，退出码 {exit_code} (耗时 {elapsed:.1f}s){_C_RESET}")
+
+            error_msg = None
+            if not is_success:
+                error_msg = f"Command failed with exit code {exit_code}"
+                if truncated_output:
+                    last_lines = "\n".join(truncated_output.split("\n")[-5:])
+                    error_msg += f"\n{last_lines}"
+
+            return BashOutputResult(
+                success=is_success,
+                error=error_msg,
+                stdout=truncated_output,
+                stderr="",
+                exit_code=exit_code or 0,
+            )
+
+        except Exception as e:
+            if process.returncode is None:
+                process.kill()
+            return BashOutputResult(
+                success=False,
+                error=str(e),
+                stdout="\n".join(output_lines),
+                stderr="",
                 exit_code=-1,
             )
 
