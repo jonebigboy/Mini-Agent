@@ -158,6 +158,29 @@ class BackgroundShellManager:
         return list(cls._shells.keys())
 
     @classmethod
+    def get_running_count(cls) -> int:
+        """获取当前正在运行的后台 shell 数量。"""
+        return sum(1 for s in cls._shells.values() if s.status == "running")
+
+    @classmethod
+    def get_summary(cls) -> list[dict]:
+        """获取所有后台 shell 的摘要信息。
+
+        Returns:
+            字典列表，每个字典包含: bash_id, command, status, elapsed (秒)。
+        """
+        summaries = []
+        for shell in cls._shells.values():
+            elapsed = time.time() - shell.start_time
+            summaries.append({
+                "bash_id": shell.bash_id,
+                "command": shell.command,
+                "status": shell.status,
+                "elapsed": elapsed,
+            })
+        return summaries
+
+    @classmethod
     def _remove(cls, bash_id: str) -> None:
         """Remove a background shell from management (internal use only)."""
         if bash_id in cls._shells:

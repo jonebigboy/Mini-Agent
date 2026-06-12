@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from mini_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, BashOutputResult, BashOutputTool, BashTool
+from mini_agent.tools.bash_tool import BackgroundShell, BackgroundShellManager, BashKillTool, BashOutputResult, BashOutputTool, BashTool
 
 
 @pytest.mark.asyncio
@@ -441,3 +441,74 @@ async def test_short_command_unchanged():
     assert result.success
     assert "short command" in result.stdout
     assert isinstance(result.stderr, str)
+
+
+# === BackgroundShellManager 查询方法测试 ===
+
+
+@pytest.fixture
+def _clean_bg_manager():
+    """保存并恢复 BackgroundShellManager._shells 的状态。"""
+    original = BackgroundShellManager._shells.copy()
+    BackgroundShellManager._shells.clear()
+    yield
+    BackgroundShellManager._shells = original
+
+
+def _make_shell(bash_id: str, command: str, status: str = "running"):
+    """创建一个用于测试的 BackgroundShell（无需真实进程）。"""
+    import time as _time
+    shell = BackgroundShell.__new__(BackgroundShell)
+    shell.bash_id = bash_id
+    shell.command = command
+    shell.process = None
+    shell.start_time = _time.time() - 60  # 模拟 60 秒前启动
+    shell.output_lines = []
+    shell.last_read_index = 0
+    shell.status = status
+    shell.exit_code = 0 if status == "completed" else None
+    return shell
+
+
+def test_get_running_count_empty(_clean_bg_manager):
+    """没有 shell 时计数为 0。"""
+    assert BackgroundShellManager.get_running_count() == 0
+
+
+def test_get_running_count_mixed(_clean_bg_manager):
+    """只计算 running 状态的 shell。"""
+    BackgroundShellManager._shells = {
+        "abc": _make_shell("abc", "sleep 100", "running"),
+        "def": _make_shell("def", "ls", "completed"),
+        "ghi": _make_shell("ghi", "npm dev", "running"),
+    }
+    assert BackgroundShellManager.get_running_count() == 2
+
+
+def test_get_summary_empty(_clean_bg_manager):
+    """没有 shell 时返回空列表。"""
+    assert BackgroundShellManager.get_summary() == []
+
+
+def test_get_summary_returns_all(_clean_bg_manager):
+    """所有状态的 shell 都应返回。"""
+    BackgroundShellManager._shells = {
+        "abc": _make_shell("abc", "sleep 100", "running"),
+        "def": _make_shell("def", "ls -la", "completed"),
+    }
+    summary = BackgroundShellManager.get_summary()
+    assert len(summary) == 2
+    ids = {s["bash_id"] for s in summary}
+    assert ids == {"abc", "def"}
+
+
+def test_get_summary_fields(_clean_bg_manager):
+    """每个摘要字典包含预期的字段。"""
+    BackgroundShellManager._shells = {
+        "abc": _make_shell("abc", "python server", "running"),
+    }
+    s = BackgroundShellManager.get_summary()[0]
+    assert s["bash_id"] == "abc"
+    assert s["command"] == "python server"
+    assert s["status"] == "running"
+    assert s["elapsed"] > 0
