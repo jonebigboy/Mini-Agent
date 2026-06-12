@@ -92,6 +92,7 @@ class Agent:
         self.confirmation_request: ConfirmationRequired | None = None
         self._confirmation_event = asyncio.Event()
         self._confirmation_result: str | None = None  # "yes", "always", or None (deny)
+        self._confirmation_feedback: str | None = None
 
     def add_user_message(self, content: str):
         """Add a user message to history."""
@@ -534,31 +535,35 @@ Requirements:
     async def _wait_for_confirmation(
         self, req: ConfirmationRequired, tool: Tool, arguments: dict
     ) -> ToolResult:
-        """Pause execution and wait for CLI to resolve the confirmation request.
+        """暂停执行，等待 CLI 处理确认请求。
 
-        Returns the tool execution result after confirmation is resolved.
+        确认解决后返回工具执行结果。
         """
         self.confirmation_request = req
         self._confirmation_event.clear()
         print(f"\n{Colors.BRIGHT_YELLOW}⏸️  等待用户确认...{Colors.RESET}")
 
-        # Wait until CLI calls resolve_confirmation()
+        # 等待 CLI 调用 resolve_confirmation()
         await self._confirmation_event.wait()
 
         request = self.confirmation_request
         result_text = self._confirmation_result
+        feedback = self._confirmation_feedback
         self.confirmation_request = None
         self._confirmation_result = None
+        self._confirmation_feedback = None
 
         if result_text is None:
-            # User denied
+            error_msg = f"用户拒绝执行: {request.command}"
+            if feedback:
+                error_msg = f"用户拒绝执行并给出反馈: {feedback}\n命令: {request.command}"
             return ToolResult(
                 success=False,
                 content="",
-                error=f"用户拒绝执行: {request.command}",
+                error=error_msg,
             )
 
-        # User confirmed — apply and re-execute
+        # 用户确认 —— 应用规则并重新执行
         if hasattr(tool, "security") and tool.security:
             always = result_text == "always"
             tool.security.apply_confirmation(request.command, always=always)
@@ -574,13 +579,15 @@ Requirements:
                 error=f"Tool execution failed: {type(e).__name__}: {e}\n\n{traceback.format_exc()}",
             )
 
-    def resolve_confirmation(self, result: str | None):
-        """Called by CLI to resume agent after user confirmation.
+    def resolve_confirmation(self, result: str | None, feedback: str | None = None):
+        """由 CLI 调用，在用户确认后恢复 Agent 执行。
 
         Args:
-            result: "yes", "always", or None (deny)
+            result: "yes"、"always" 或 None（拒绝）
+            feedback: 用户选择引导 LLM 时的自由文本反馈
         """
         self._confirmation_result = result
+        self._confirmation_feedback = feedback
         self._confirmation_event.set()
 
     def get_history(self) -> list[Message]:

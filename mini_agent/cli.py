@@ -32,7 +32,7 @@ from mini_agent.agent import Agent
 from mini_agent.config import Config
 from mini_agent.schema import LLMProvider
 from mini_agent.tools.base import Tool
-from mini_agent.tools.bash_tool import BashKillTool, BashOutputTool, BashTool
+from mini_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, BashOutputTool, BashTool
 from mini_agent.tools.file_tools import EditTool, ReadTool, WriteTool
 from mini_agent.tools.mcp_loader import cleanup_mcp_connections, load_mcp_tools_async, set_mcp_timeout_config
 from mini_agent.tools.memory_manager import MemoryManager
@@ -40,6 +40,7 @@ from mini_agent.tools.note_tool import SessionNoteTool
 from mini_agent.tools.skill_tool import create_skill_tools
 from mini_agent.utils import calculate_display_width
 from mini_agent.security import SecurityMiddleware
+from mini_agent.ui.confirm_selector import ConfirmSelector
 
 
 # ANSI color codes
@@ -199,6 +200,7 @@ def print_help():
   {Colors.BRIGHT_GREEN}/history{Colors.RESET}   - Show current session message count
   {Colors.BRIGHT_GREEN}/stats{Colors.RESET}     - Show session statistics
   {Colors.BRIGHT_GREEN}/log{Colors.RESET}       - Show log directory and recent files
+  {Colors.BRIGHT_GREEN}/bg{Colors.RESET}        - 显示后台 shell 进程
   {Colors.BRIGHT_GREEN}/log <file>{Colors.RESET} - Read a specific log file
   {Colors.BRIGHT_GREEN}/exit{Colors.RESET}      - Exit program (also: exit, quit, q)
 
@@ -282,6 +284,52 @@ def print_stats(agent: Agent, session_start: datetime):
     if agent.api_total_tokens > 0:
         print(f"  API Tokens Used: {Colors.BRIGHT_MAGENTA}{agent.api_total_tokens:,}{Colors.RESET}")
     print(f"{Colors.DIM}{'─' * 40}{Colors.RESET}\n")
+
+
+def _format_elapsed(seconds: float) -> str:
+    """将秒数格式化为易读的时间字符串。"""
+    if seconds >= 3600:
+        hours = int(seconds // 3600)
+        mins = int((seconds % 3600) // 60)
+        return f"{hours}h{mins}m"
+    elif seconds >= 60:
+        return f"{int(seconds // 60)}m"
+    else:
+        return f"{int(seconds)}s"
+
+
+def _print_background_status():
+    """打印后台 shell 进程状态（/bg 命令使用）。"""
+    summaries = BackgroundShellManager.get_summary()
+    if not summaries:
+        print(f"\n{Colors.DIM}没有后台进程。{Colors.RESET}\n")
+        return
+
+    running = [s for s in summaries if s["status"] == "running"]
+    stopped = [s for s in summaries if s["status"] != "running"]
+
+    print(f"\n{Colors.BOLD}{Colors.BRIGHT_CYAN}⚙️  后台进程{Colors.RESET}")
+    print(f"{Colors.DIM}{'─' * 60}{Colors.RESET}")
+
+    if running:
+        print(f"  {Colors.BRIGHT_GREEN}运行中 ({len(running)}):{Colors.RESET}")
+        for s in running:
+            time_str = _format_elapsed(s["elapsed"])
+            cmd = s["command"][:40] + "..." if len(s["command"]) > 40 else s["command"]
+            print(
+                f"    {Colors.BRIGHT_YELLOW}{s['bash_id']}{Colors.RESET}"
+                f"  {time_str:>5s}  {Colors.DIM}{cmd}{Colors.RESET}"
+            )
+
+    if stopped:
+        print(f"  {Colors.DIM}已结束 ({len(stopped)}):{Colors.RESET}")
+        for s in stopped:
+            cmd = s["command"][:40] + "..." if len(s["command"]) > 40 else s["command"]
+            print(
+                f"    {s['bash_id']}  {s['status']:<10s}  {Colors.DIM}{cmd}{Colors.RESET}"
+            )
+
+    print(f"{Colors.DIM}{'─' * 60}{Colors.RESET}\n")
 
 
 def parse_args() -> argparse.Namespace:
@@ -647,7 +695,7 @@ async def run_agent(workspace_dir: Path, task: str = None):
     # 9. Setup prompt_toolkit session
     # Command completer
     command_completer = WordCompleter(
-        ["/help", "/clear", "/history", "/stats", "/log", "/exit", "/quit", "/q"],
+        ["/help", "/clear", "/history", "/stats", "/log", "/bg", "/exit", "/quit", "/q"],
         ignore_case=True,
         sentence=True,
     )
@@ -694,11 +742,15 @@ async def run_agent(workspace_dir: Path, task: str = None):
     while True:
         try:
             # Get user input using prompt_toolkit
+            # 动态 prompt：显示后台进程数量
+            running_count = BackgroundShellManager.get_running_count()
+            prompt_parts = [("class:prompt", "You")]
+            if running_count > 0:
+                prompt_parts.append(("", f" [⚙️ {running_count} bg]"))
+            prompt_parts.append(("", " › "))
+
             user_input = await session.prompt_async(
-                [
-                    ("class:prompt", "You"),
-                    ("", " › "),
-                ],
+                prompt_parts,
                 multiline=False,
                 enable_history_search=True,
             )
@@ -745,6 +797,10 @@ async def run_agent(workspace_dir: Path, task: str = None):
                         # /log <filename> - read specific log file
                         filename = parts[1].strip("\"'")
                         read_log_file(filename)
+                    continue
+
+                elif command == "/bg":
+                    _print_background_status()
                     continue
 
                 else:
@@ -836,22 +892,17 @@ async def run_agent(workspace_dir: Path, task: str = None):
                         esc_thread.join(timeout=0.3)
 
                         req = agent.confirmation_request
-                        print(f"\n⚠️  危险命令检测: {req.command}")
-                        print(f"原因: {req.reason}")
+                        selector = ConfirmSelector(
+                            command=req.command, reason=req.reason
+                        )
+                        result = await selector.select()
 
-                        # Use prompt_toolkit for confirmation input
-                        try:
-                            choice = await session.prompt_async(
-                                "[y] 执行一次  [n] 拒绝  [a] 始终允许此类命令 > "
-                            )
-                            choice = choice.strip().lower()
-                        except KeyboardInterrupt:
-                            choice = ""
-
-                        if choice == "a":
-                            agent.resolve_confirmation("always")
-                        elif choice == "y":
+                        if result.action == "yes":
                             agent.resolve_confirmation("yes")
+                        elif result.action == "always":
+                            agent.resolve_confirmation("always")
+                        elif result.action == "feedback":
+                            agent.resolve_confirmation(None, feedback=result.feedback)
                         else:
                             agent.resolve_confirmation(None)
 
@@ -871,6 +922,22 @@ async def run_agent(workspace_dir: Path, task: str = None):
                 agent.cancel_event = None
                 esc_listener_stop.set()
                 esc_thread.join(timeout=0.2)
+
+            # 如果有正在运行的后台进程，显示状态摘要
+            running_summaries = [
+                s for s in BackgroundShellManager.get_summary() if s["status"] == "running"
+            ]
+            if running_summaries:
+                items = []
+                for s in running_summaries:
+                    time_str = _format_elapsed(s["elapsed"])
+                    cmd = s["command"][:30] + "..." if len(s["command"]) > 30 else s["command"]
+                    items.append(f"{s['bash_id']} ({cmd}, {time_str})")
+                suffix = "es" if len(running_summaries) > 1 else ""
+                print(
+                    f"\n{Colors.BRIGHT_YELLOW}⚙️  {len(running_summaries)} 个后台进程"
+                    f"运行中: {', '.join(items)}{Colors.RESET}"
+                )
 
             # Visual separation
             print(f"\n{Colors.DIM}{'─' * 60}{Colors.RESET}\n")
