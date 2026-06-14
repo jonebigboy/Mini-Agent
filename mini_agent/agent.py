@@ -80,8 +80,9 @@ class Agent:
         # Initialize message history
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]
 
-        # Initialize logger
+        # Initialize logger (creates one log file for the whole session)
         self.logger = AgentLogger()
+        print(f"{Colors.DIM}📝 Log file: {self.logger.get_log_file_path()}{Colors.RESET}")
 
         # Token usage from last API response (updated after each LLM call)
         self.api_total_tokens: int = 0
@@ -344,9 +345,8 @@ Requirements:
         if cancel_event is not None:
             self.cancel_event = cancel_event
 
-        # Start new run, initialize log file
-        self.logger.start_new_run()
-        print(f"{Colors.DIM}📝 Log file: {self.logger.get_log_file_path()}{Colors.RESET}")
+        # Start a new run section within the session log file
+        self.logger.start_new_run_section()
 
         step = 0
         run_start_time = perf_counter()

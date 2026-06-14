@@ -7,6 +7,8 @@ from typing import Any
 
 from .schema import Message, ToolCall
 
+LOG_TTL_DAYS = 30
+
 
 class AgentLogger:
     """Agent run logger
@@ -17,28 +19,89 @@ class AgentLogger:
     """
 
     def __init__(self):
-        """Initialize logger
+        """Initialize logger.
 
-        Logs are stored in ~/.mini-agent/log/ directory
+        Logs are stored in ~/.mini-agent/log/ directory. A new log file is
+        created immediately for the session (one file per CLI session).
         """
-        # Use ~/.mini-agent/log/ directory for logs
         self.log_dir = Path.home() / ".mini-agent" / "log"
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.log_file = None
         self.log_index = 0
+        self.run_count = 0
+        self.start_new_session()
 
-    def start_new_run(self):
-        """Start new run, create new log file"""
+    def start_new_session(self):
+        """Start a new session: create a new log file and reset counters.
+
+        Called automatically from __init__. One AgentLogger instance maps to
+        one CLI session, which maps to one log file.
+        """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_filename = f"agent_run_{timestamp}.log"
         self.log_file = self.log_dir / log_filename
         self.log_index = 0
+        self.run_count = 0
 
         # Write log header
         with open(self.log_file, "w", encoding="utf-8") as f:
             f.write("=" * 80 + "\n")
             f.write(f"Agent Run Log - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             f.write("=" * 80 + "\n\n")
+
+        # Prune logs older than the TTL.
+        removed = self._cleanup_old_logs()
+        if removed:
+            print(f"🗑 Cleaned {removed} log file(s) older than {LOG_TTL_DAYS} days")
+
+    def _cleanup_old_logs(self, max_age_days: int = LOG_TTL_DAYS) -> int:
+        """Delete log files older than max_age_days.
+
+        Returns the number of files deleted. Errors on individual files are
+        swallowed (printed as warnings) so a single bad file cannot abort
+        session startup. The file just created by start_new_session is never
+        deleted because its mtime is current.
+        """
+        now = datetime.now().timestamp()
+        cutoff = now - (max_age_days * 24 * 3600)
+        deleted = 0
+
+        for entry in self.log_dir.glob("*.log"):
+            try:
+                mtime = entry.stat().st_mtime
+            except OSError:
+                continue
+            if mtime < cutoff:
+                try:
+                    entry.unlink()
+                    deleted += 1
+                except OSError as exc:
+                    # Don't abort startup over one unremovable file.
+                    print(f"[logger] could not delete {entry}: {exc}")
+
+        return deleted
+
+    def start_new_run_section(self):
+        """Mark the start of a new run within the current session.
+
+        Writes a separator header before each run except the first (which is
+        already covered by the session file header). Resets log_index so the
+        [N] entry numbers are scoped per-run.
+        """
+        self.run_count += 1
+        self.log_index = 0
+
+        if self.run_count == 1:
+            # First run: file header from start_new_session already covers it.
+            return
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        prefix = f"--- Run #{self.run_count} started at {timestamp} "
+        num_dashes = max(0, 80 - len(prefix))
+        with open(self.log_file, "a", encoding="utf-8") as f:
+            f.write("\n" + "=" * 80 + "\n")
+            f.write(prefix + "-" * num_dashes + "\n")
+            f.write("=" * 80 + "\n")
 
     def log_request(self, messages: list[Message], tools: list[Any] | None = None):
         """Log LLM request
