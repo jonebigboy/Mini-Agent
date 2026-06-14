@@ -36,7 +36,6 @@ from mini_agent.tools.bash_tool import BackgroundShellManager, BashKillTool, Bas
 from mini_agent.tools.file_tools import EditTool, ReadTool, WriteTool
 from mini_agent.tools.mcp_loader import cleanup_mcp_connections, load_mcp_tools_async, set_mcp_timeout_config
 from mini_agent.tools.memory_manager import MemoryManager
-from mini_agent.tools.note_tool import SessionNoteTool
 from mini_agent.tools.skill_tool import create_skill_tools
 from mini_agent.utils import calculate_display_width
 from mini_agent.security import SecurityMiddleware
@@ -481,6 +480,23 @@ async def initialize_base_tools(config: Config):
     return tools, skill_loader
 
 
+def _warn_legacy_files(workspace_dir: Path) -> None:
+    """Print warnings for deprecated files from previous Mini-Agent versions."""
+    legacy_global = Path.home() / ".mini-agent" / "MINI_AGENT.md"
+    if legacy_global.exists():
+        print(
+            f"{Colors.YELLOW}⚠️  Detected {legacy_global}. "
+            f"Please rename to AGENTS.md to match the new convention.{Colors.RESET}"
+        )
+
+    legacy_notes = workspace_dir / ".agent_memory.json"
+    if legacy_notes.exists():
+        print(
+            f"{Colors.YELLOW}ℹ️  Found {legacy_notes} (legacy SessionNoteTool data). "
+            f"Safe to delete — SessionNoteTool has been removed.{Colors.RESET}"
+        )
+
+
 def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path,
                         security: SecurityMiddleware | None = None):
     """Add workspace-dependent tools
@@ -512,11 +528,6 @@ def add_workspace_tools(tools: List[Tool], config: Config, workspace_dir: Path,
             ]
         )
         print(f"{Colors.GREEN}✅ Loaded file operation tools (workspace: {workspace_dir}){Colors.RESET}")
-
-    # Session note tool - needs workspace to store memory file
-    if config.tools.enable_note:
-        tools.append(SessionNoteTool(memory_file=str(workspace_dir / ".agent_memory.json")))
-        print(f"{Colors.GREEN}✅ Loaded session note tool{Colors.RESET}")
 
 
 async def _quiet_cleanup():
@@ -638,6 +649,9 @@ async def run_agent(workspace_dir: Path, task: str = None):
         memory_manager = MemoryManager(workspace_dir)
         memory_context = memory_manager.initialize_memory()
         print(f"{Colors.GREEN}✅ Loaded memory system (dir: {memory_manager.memory_dir}){Colors.RESET}")
+
+    # 4.6 Legacy file detection (warn about deprecated files)
+    _warn_legacy_files(workspace_dir)
 
     # 5. Load System Prompt (with priority search)
     system_prompt_path = Config.find_config_file(config.agent.system_prompt_path)

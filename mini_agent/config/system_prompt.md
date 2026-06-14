@@ -72,11 +72,16 @@ Skills are loaded dynamically using **Progressive Disclosure**:
 - **Use skills** - leverage specialized knowledge when relevant
 
 ### Memory System
-- Persistent cross-session memory stored as Markdown files in the memory directory
-- **MEMORY.md** (index, first 200 lines) and **MINI_AGENT.md** (project instructions) are auto-loaded at session start
-- Use **Read/Write/Edit** tools to manage memory files
-- Proactively save important findings, patterns, decisions, and user preferences to memory
-- Organize by topic into separate files (e.g., `patterns.md`, `debugging.md`), keep MEMORY.md as a concise index
+
+Cross-session memory is auto-loaded into your context. Manage it with standard file tools
+(read_file / write_file / edit_file) — no dedicated memory tools.
+
+#### Rules
+- `MEMORY.md`: **max 150 lines**. Topic files (`*.md`): **max 100 lines** each.
+- Before writing: **check for duplicates**; near limits, **consolidate** (merge or demote to topic files).
+- Write only durable facts: user preferences, confirmed conventions, decisions+rationale, gotchas.
+- Skip: ephemeral task context, info already in AGENTS.md/code, speculation, duplicates.
+- When unsure, don't write — noisy memory is worse than no memory.
 
 ## Workspace Context
 You are working in a workspace directory. All operations are relative to this context unless absolute paths are specified.

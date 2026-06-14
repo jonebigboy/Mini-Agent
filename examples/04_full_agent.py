@@ -18,7 +18,6 @@ from mini_agent.agent import Agent
 from mini_agent.config import Config
 from mini_agent.tools import BashTool, EditTool, ReadTool, WriteTool
 from mini_agent.tools.mcp_loader import load_mcp_tools_async
-from mini_agent.tools.note_tool import RecallNoteTool, SessionNoteTool
 
 
 async def demo_full_agent():
@@ -78,15 +77,7 @@ You have record_note and recall_notes tools. Use them to:
         ]
         print("✓ Loaded 4 basic tools")
 
-        # Add Session Note tools
-        memory_file = Path(workspace_dir) / ".agent_memory.json"
-        tools.extend(
-            [
-                SessionNoteTool(memory_file=str(memory_file)),
-                RecallNoteTool(memory_file=str(memory_file)),
-            ]
-        )
-        print("✓ Loaded 2 Session Note tools")
+        # SessionNoteTool removed — use MemoryManager + AGENTS.md instead.
 
         # Load MCP tools (if configured)
         try:
@@ -166,15 +157,6 @@ You have record_note and recall_notes tools. Use them to:
                     if len(content.split("\n")) > 20:
                         print("... (truncated)")
                     print("-" * 60)
-
-            # Show memory
-            if memory_file.exists():
-                import json
-
-                notes = json.loads(memory_file.read_text())
-                print(f"\n💾 Session notes recorded: {len(notes)}")
-                for note in notes:
-                    print(f"  - [{note['category']}] {note['content'][:60]}...")
 
         except Exception as e:
             print(f"❌ Error during agent execution: {e}")

@@ -1,3 +1,7 @@
+# DEPRECATED: SessionNoteTool has been removed from Mini-Agent core.
+# This example is preserved as a conceptual reference for pluggable
+# storage backend patterns. The current memory system uses
+# MemoryManager + Markdown files. See docs/memory-system-design.md.
 """Example 3: Session Note Tool Usage
 
 This example demonstrates the Session Note Tool - one of the core features

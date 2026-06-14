@@ -14,8 +14,8 @@ Mini-Agent 实现了跨会话持久化记忆系统，参考 Claude Code 的记�
 
 | 层级 | 文件路径 | 作用范围 | 写入方 | 是否必须存在 |
 |------|---------|---------|--------|------------|
-| 全局用户偏好 | `~/.mini-agent/MINI_AGENT.md` | 所有项目 | 用户手动创建 | 否 |
-| 项目指令 | `<项目根目录>/MINI_AGENT.md` | 单个项目（可通过 git 共享） | 用户手动创建 | 否 |
+| 全局用户偏好 | `~/.mini-agent/AGENTS.md` | 所有项目 | 用户手动创建 | 否 |
+| 项目指令 | `<项目根目录>/AGENTS.md` | 单个项目（可通过 git 共享） | 用户手动创建 | 否 |
 | 自动记忆索引 | `~/.mini-agent/projects/<name>_<hash8>/memory/MEMORY.md` | 单个项目（本地） | Agent 运行时主动保存 | 否 |
 
 三个文件都是可选的，不存在则对应 section 不注入。加载优先级：全局 → 项目 → 自动记忆。
@@ -24,7 +24,7 @@ Mini-Agent 实现了跨会话持久化记忆系统，参考 Claude Code 的记�
 
 ```
 ~/.mini-agent/
-  MINI_AGENT.md                                    # 全局用户偏好
+  AGENTS.md                                    # 全局用户偏好
   projects/
     Mini-Agent_ac37145d/                           # <目录名>_<hash8>
       memory/
@@ -34,7 +34,7 @@ Mini-Agent 实现了跨会话持久化记忆系统，参考 Claude Code 的记�
         ...
 
 <项目根目录>/
-  MINI_AGENT.md                                    # 项目指令
+  AGENTS.md                                    # 项目指令
 ```
 
 **路径计算规则：**
@@ -90,14 +90,14 @@ This information carries across sessions.
 
 ---
 
-## Global User Preferences (from ~/.mini-agent/MINI_AGENT.md)
+## Global User Preferences (from ~/.mini-agent/AGENTS.md)
 
 Always use uv for Python.
 Reply in Chinese.
 
 ---
 
-## Project Instructions (from MINI_AGENT.md)
+## Project Instructions (from AGENTS.md)
 
 Always use async/await for I/O operations.
 
@@ -133,8 +133,8 @@ Keep memory concise and well-organized.
 ```
 class MemoryManager:
     MAX_INDEX_LINES = 200                          # MEMORY.md 自动加载行数上限
-    PROJECT_INSTRUCTION_FILENAME = "MINI_AGENT.md"
-    GLOBAL_INSTRUCTION_FILE = ~/.mini-agent/MINI_AGENT.md
+    PROJECT_INSTRUCTION_FILENAME = "AGENTS.md"
+    GLOBAL_INSTRUCTION_FILE = ~/.mini-agent/AGENTS.md
 
     __init__(workspace_dir)
         → self.workspace_dir = Path(workspace_dir).absolute()
@@ -156,10 +156,10 @@ class MemoryManager:
         → 超过 200 行截断 + 提示
 
     load_project_instructions() → str | None
-        → 读取 project_root/MINI_AGENT.md
+        → 读取 project_root/AGENTS.md
 
     load_global_instructions() → str | None
-        → 读取 ~/.mini-agent/MINI_AGENT.md
+        → 读取 ~/.mini-agent/AGENTS.md
 
     build_memory_context() → str
         → 收集三层内容，用 --- 分隔拼接
@@ -218,8 +218,8 @@ LLM 运行中使用 write_file/read_file/edit_file 管理记忆文件
 | 文件 | 自动加载上限 | 说明 |
 |------|------------|------|
 | `MEMORY.md` | 200 行 | 超出部分截断并显示 `[Memory index truncated: showing 200 of N lines]` |
-| `MINI_AGENT.md`（全局） | 无硬限制 | 用户自行管理，建议精简 |
-| `MINI_AGENT.md`（项目） | 无硬限制 | 用户自行管理，建议精简 |
+| `AGENTS.md`（全局） | 无硬限制 | 用户自行管理，建议精简 |
+| `AGENTS.md`（项目） | 无硬限制 | 用户自行管理，建议精简 |
 | 主题文件（`*.md`） | 不自动加载 | Agent 通过文件工具按需读取 |
 
 Token 预算估计：三层全部填满时约 2000-5000 tokens，在 80000 token 限制内。
@@ -254,9 +254,8 @@ tools:
 
 ## 兼容性
 
-- 与 `SessionNoteTool` / `RecallNoteTool`（基于 JSON 的会话笔记）共存，互不影响
-- `enable_note` 和 `enable_memory` 独立控制
-- MCP 知识图谱记忆服务器（`@modelcontextprotocol/server-memory`）可同时启用，作为实体关系存储的补充
+- `MemoryManager` 是 Mini-Agent 的唯一记忆系统（旧的 JSON 笔记工具已移除）
+- MCP 知识图谱记忆服务器（`@modelcontextprotocol/server-memory`）当前已禁用，如需要可作为实体关系存储的补充
 
 ---
 
@@ -264,8 +263,8 @@ tools:
 
 | 特性 | Mini-Agent | Claude Code | Codex CLI | Windsurf |
 |------|-----------|-------------|-----------|----------|
-| 项目指令文件 | `MINI_AGENT.md` | `CLAUDE.md` | `AGENTS.md` | `.windsurfrules` |
-| 全局用户偏好 | `~/.mini-agent/MINI_AGENT.md` | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` | global_rules.md |
+| 项目指令文件 | `AGENTS.md` | `CLAUDE.md` | `AGENTS.md` | `.windsurfrules` |
+| 全局用户偏好 | `~/.mini-agent/AGENTS.md` | `~/.claude/CLAUDE.md` | `~/.codex/AGENTS.md` | global_rules.md |
 | 自动记忆 | `MEMORY.md`（200 行） | `MEMORY.md`（200 行） | 无 | Cascade Memories |
 | Git 仓库感知 | 有 | 有 | 有 | 无 |
 | 目录级条件加载 | 无 | `.claude/rules/` + glob | 嵌套 `AGENTS.md` | 无 |

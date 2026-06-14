@@ -18,7 +18,7 @@ This project is a **teaching-level demo** that demonstrates the core concepts an
 
 | Feature                | Demo Implementation                                                                                                   |
 | ---------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Context Management** | ✅ Simple persistence via SessionNoteTool with file storage; basic summarization when approaching context window limit |
+| **Context Management** | ✅ Cross-session memory via MemoryManager (Markdown-based); basic summarization when approaching context window limit |
 | **Tool Calling**       | ✅ Basic Read/Write/Edit/Bash                                                                                          |
 | **Error Handling**     | ✅ Basic exception catching                                                                                            |
 | **Logging**            | ✅ Simple print output                                                                                                 |

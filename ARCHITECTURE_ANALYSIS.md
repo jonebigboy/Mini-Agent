@@ -58,7 +58,7 @@ Mini-Agent/
 │   │   ├── base.py          # Tool 基类
 │   │   ├── file_tools.py    # 文件操作工具
 │   │   ├── bash_tool.py     # Shell 命令工具
-│   │   ├── note_tool.py     # 笔记工具
+│   │   ├── memory_manager.py # 跨会话记忆管理
 │   │   ├── mcp_loader.py    # MCP 工具加载器
 │   │   ├── skill_loader.py  # Skill 加载器
 │   │   └── skill_tool.py    # Skill 调用工具
@@ -118,8 +118,8 @@ Mini-Agent/
          │             │
          ▼             ▼
     ┌─────────┐   ┌─────────────────────────┐
-    │Anthropic│   │ File │ Bash │ Note │ MCP │
-    │  OpenAI │   │ Tools│ Tool │ Tool  │Tools│
+    │Anthropic│   │ File │ Bash │Memory│ MCP │
+    │  OpenAI │   │ Tools│ Tool │ Mgr  │Tools│
     └─────────┘   └─────────────────────────┘
 ```
 
@@ -201,7 +201,7 @@ class Tool:
 **具体工具：**
 - `ReadTool` / `WriteTool` / `EditTool` - 文件操作
 - `BashTool` / `BashKillTool` / `BashOutputTool` - Shell 命令
-- `SessionNoteTool` - 持久化笔记
+- `MemoryManager` - 跨会话持久化记忆（Markdown-based）
 - `MCPTool` - MCP 工具包装器
 - `SkillTool` - Claude Skill 调用
 
@@ -245,7 +245,7 @@ class Config(BaseModel):
 │ 2. 工具初始化 (cli.py::initialize_tools())                    │
 │    - 文件工具 (Read/Write/Edit)                               │
 │    - Bash 工具                                                │
-│    - 笔记工具 (SessionNoteTool)                               │
+│    - 记忆系统 (MemoryManager)                                │
 │    - MCP 工具加载 (load_mcp_tools_async)                      │
 │    - Skills 工具加载 (create_skill_tools)                     │
 └──────────────┬───────────────────────────────────────────────┘

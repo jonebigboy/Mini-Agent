@@ -18,14 +18,14 @@ class MemoryManager:
             <topic>.md        # Topic-specific files (on-demand via file tools)
 
     Also loads instructions from (in priority order):
-        ~/.mini-agent/MINI_AGENT.md          # Global user preferences (all projects)
-        <workspace>/MINI_AGENT.md            # Project-specific instructions
+        ~/.mini-agent/AGENTS.md              # Global user preferences (all projects)
+        <workspace>/AGENTS.md                # Project-specific instructions
         <memory_dir>/MEMORY.md               # Auto-saved memory index
     """
 
     MAX_INDEX_LINES = 200
-    PROJECT_INSTRUCTION_FILENAME = "MINI_AGENT.md"
-    GLOBAL_INSTRUCTION_FILE = Path.home() / ".mini-agent" / "MINI_AGENT.md"
+    PROJECT_INSTRUCTION_FILENAME = "AGENTS.md"
+    GLOBAL_INSTRUCTION_FILE = Path.home() / ".mini-agent" / "AGENTS.md"
 
     def __init__(self, workspace_dir: str | Path):
         self.workspace_dir = Path(workspace_dir).absolute()
@@ -91,7 +91,7 @@ class MemoryManager:
         return truncated
 
     def load_project_instructions(self) -> str | None:
-        """Load MINI_AGENT.md from project root (git repo root or workspace_dir).
+        """Load AGENTS.md from project root (git repo root or workspace_dir).
 
         Returns None if file doesn't exist.
         """
@@ -101,7 +101,7 @@ class MemoryManager:
         return instruction_file.read_text(encoding="utf-8")
 
     def load_global_instructions(self) -> str | None:
-        """Load MINI_AGENT.md from ~/.mini-agent/ (global user preferences).
+        """Load AGENTS.md from ~/.mini-agent/ (global user preferences).
 
         Returns None if file doesn't exist.
         """
@@ -120,14 +120,14 @@ class MemoryManager:
         global_instructions = self.load_global_instructions()
         if global_instructions:
             parts.append(
-                "## Global User Preferences (from ~/.mini-agent/MINI_AGENT.md)\n\n"
+                "## Global User Preferences (from ~/.mini-agent/AGENTS.md)\n\n"
                 f"{global_instructions}"
             )
 
         instructions = self.load_project_instructions()
         if instructions:
             parts.append(
-                "## Project Instructions (from MINI_AGENT.md)\n\n"
+                "## Project Instructions (from AGENTS.md)\n\n"
                 f"{instructions}"
             )
 

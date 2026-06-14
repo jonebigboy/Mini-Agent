@@ -62,7 +62,6 @@ async def run_agent(workspace_dir: Path, task: str = None):
 │   add_workspace_tools(tools, config, workspace_dir)         │
 │   - ReadTool, WriteTool, EditTool（依赖 workspace_dir）      │
 │   - BashTool（以 workspace_dir 为工作目录）                 │
-│   - SessionNoteTool（持久化笔记）                            │
 └────────────────────────┬────────────────────────────────────┘
                          ↓
 ┌─────────────────────────────────────────────────────────────┐
@@ -230,7 +229,6 @@ add_workspace_tools(tools, config, workspace_dir)
 # - WriteTool（写入文件，需要 workspace_dir）
 # - EditTool（编辑文件，需要 workspace_dir）
 # - BashTool（Shell 命令，以 workspace_dir 为 cwd）
-# - SessionNoteTool（笔记工具）
 ```
 
 **为什么分两步？**

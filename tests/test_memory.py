@@ -88,7 +88,7 @@ def test_load_memory_index_truncation(temp_workspace):
 
 
 def test_load_project_instructions_not_exists(temp_workspace):
-    """Test loading when MINI_AGENT.md doesn't exist."""
+    """Test loading when AGENTS.md doesn't exist."""
     temp_workspace.mkdir()
     manager = MemoryManager(temp_workspace)
 
@@ -96,12 +96,12 @@ def test_load_project_instructions_not_exists(temp_workspace):
 
 
 def test_load_project_instructions_exists(temp_workspace):
-    """Test loading existing MINI_AGENT.md."""
+    """Test loading existing AGENTS.md."""
     temp_workspace.mkdir()
     manager = MemoryManager(temp_workspace)
 
     content = "# Project Rules\n\nAlways use async/await."
-    (temp_workspace / "MINI_AGENT.md").write_text(content)
+    (temp_workspace / "AGENTS.md").write_text(content)
 
     result = manager.load_project_instructions()
     assert result == content
@@ -117,12 +117,12 @@ def test_build_memory_context_empty(temp_workspace):
 
 
 def test_build_memory_context_with_both(temp_workspace):
-    """Test context with both MINI_AGENT.md and MEMORY.md."""
+    """Test context with both AGENTS.md and MEMORY.md."""
     temp_workspace.mkdir()
     manager = MemoryManager(temp_workspace)
     manager.ensure_memory_dir()
 
-    (temp_workspace / "MINI_AGENT.md").write_text("# Project Rules\nUse async.")
+    (temp_workspace / "AGENTS.md").write_text("# Project Rules\nUse async.")
     (manager.memory_dir / "MEMORY.md").write_text("# Memory Index\nTopic A")
 
     context = manager.build_memory_context()
@@ -148,7 +148,7 @@ def test_initialize_memory_with_content(temp_workspace):
     """Test initialization with existing memory content."""
     temp_workspace.mkdir()
 
-    (temp_workspace / "MINI_AGENT.md").write_text("# Rules")
+    (temp_workspace / "AGENTS.md").write_text("# Rules")
     manager = MemoryManager(temp_workspace)
 
     context = manager.initialize_memory()
@@ -207,16 +207,16 @@ def test_subdirectory_shares_memory_with_repo_root(tmp_path):
 
 
 def test_load_global_instructions_not_exists(temp_workspace):
-    """Test loading when global MINI_AGENT.md doesn't exist."""
+    """Test loading when global AGENTS.md doesn't exist."""
     temp_workspace.mkdir()
     manager = MemoryManager(temp_workspace)
     assert manager.load_global_instructions() is None
 
 
 def test_load_global_instructions_exists(temp_workspace, tmp_path):
-    """Test loading existing global MINI_AGENT.md."""
+    """Test loading existing global AGENTS.md."""
     temp_workspace.mkdir()
-    global_file = tmp_path / ".mini-agent" / "MINI_AGENT.md"
+    global_file = tmp_path / ".mini-agent" / "AGENTS.md"
     global_file.parent.mkdir(parents=True, exist_ok=True)
     global_file.write_text("# Global\nUse uv for all projects.")
 
@@ -232,11 +232,11 @@ def test_build_memory_context_with_all_three(temp_workspace, tmp_path):
     manager = MemoryManager(temp_workspace)
     manager.ensure_memory_dir()
 
-    global_file = tmp_path / ".mini-agent" / "MINI_AGENT.md"
+    global_file = tmp_path / ".mini-agent" / "AGENTS.md"
     global_file.parent.mkdir(parents=True, exist_ok=True)
     global_file.write_text("# Global\nAlways use uv.")
 
-    (temp_workspace / "MINI_AGENT.md").write_text("# Project\nUse async.")
+    (temp_workspace / "AGENTS.md").write_text("# Project\nUse async.")
     (manager.memory_dir / "MEMORY.md").write_text("# Memory\nTopic A")
 
     with patch.object(MemoryManager, "GLOBAL_INSTRUCTION_FILE", global_file):
