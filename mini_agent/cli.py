@@ -29,6 +29,7 @@ from prompt_toolkit.styles import Style
 
 from mini_agent import LLMClient
 from mini_agent.agent import Agent
+from mini_agent.commands.init_command import INIT_PROMPT_TEMPLATE
 from mini_agent.config import Config
 from mini_agent.schema import LLMProvider
 from mini_agent.tools.base import Tool
@@ -198,6 +199,7 @@ def print_help():
   {Colors.BRIGHT_GREEN}/clear{Colors.RESET}     - Clear session history (keep system prompt)
   {Colors.BRIGHT_GREEN}/history{Colors.RESET}   - Show current session message count
   {Colors.BRIGHT_GREEN}/stats{Colors.RESET}     - Show session statistics
+  {Colors.BRIGHT_GREEN}/init{Colors.RESET}      - Scan project and generate AGENTS.md
   {Colors.BRIGHT_GREEN}/log{Colors.RESET}       - Show log directory and recent files
   {Colors.BRIGHT_GREEN}/bg{Colors.RESET}        - 显示后台 shell 进程
   {Colors.BRIGHT_GREEN}/log <file>{Colors.RESET} - Read a specific log file
@@ -709,7 +711,7 @@ async def run_agent(workspace_dir: Path, task: str = None):
     # 9. Setup prompt_toolkit session
     # Command completer
     command_completer = WordCompleter(
-        ["/help", "/clear", "/history", "/stats", "/log", "/bg", "/exit", "/quit", "/q"],
+        ["/help", "/clear", "/history", "/stats", "/init", "/log", "/bg", "/exit", "/quit", "/q"],
         ignore_case=True,
         sentence=True,
     )
@@ -816,6 +818,14 @@ async def run_agent(workspace_dir: Path, task: str = None):
                 elif command == "/bg":
                     _print_background_status()
                     continue
+
+                elif command == "/init":
+                    # Inject the init prompt as a normal user message and fall
+                    # through to the regular agent execution flow below (which
+                    # provides Esc cancellation, ConfirmSelector integration,
+                    # background-process status printing, and error handling).
+                    # No `continue` here — we want the fall-through.
+                    user_input = INIT_PROMPT_TEMPLATE.format(workspace=str(workspace_dir))
 
                 else:
                     print(f"{Colors.RED}❌ Unknown command: {user_input}{Colors.RESET}")
