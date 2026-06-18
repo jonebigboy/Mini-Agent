@@ -11,8 +11,22 @@ import pytest
 from mini_agent import LLMClient
 from mini_agent.agent import Agent
 from mini_agent.schema import LLMResponse, Message
+from mini_agent.session.writer import SessionWriter
 from mini_agent.tools.bash_tool import BashTool
 from mini_agent.tools.file_tools import ReadTool, WriteTool
+
+
+def _make_writer(workspace: str, model: str = "test") -> SessionWriter:
+    """Helper: create and open a SessionWriter for tests."""
+    writer = SessionWriter(
+        session_id=f"test-{workspace[-8:].replace('/', '-')}",
+        cwd=workspace,
+        workspace=workspace,
+        model=model,
+        cli_args={},
+    )
+    writer.open()
+    return writer
 
 
 @pytest.fixture
@@ -29,7 +43,7 @@ def temp_workspace():
         yield tmpdir
 
 
-def test_multi_turn_conversation(mock_llm_client, temp_workspace):
+def test_multi_turn_conversation(mock_llm_client, temp_workspace, mini_agent_home):
     """Test multi-turn conversation and context sharing"""
     # Prepare test data
     system_prompt = "You are an intelligent assistant"
@@ -39,11 +53,13 @@ def test_multi_turn_conversation(mock_llm_client, temp_workspace):
     ]
 
     # Create agent
+    writer = _make_writer(temp_workspace)
     agent = Agent(
         llm_client=mock_llm_client,
         system_prompt=system_prompt,
         tools=tools,
         workspace_dir=temp_workspace,
+        session_writer=writer,
     )
 
     # Verify initial state
@@ -71,13 +87,15 @@ def test_multi_turn_conversation(mock_llm_client, temp_workspace):
     assert user_messages[1].content == "Help me create a file"
 
 
-def test_session_history_management(mock_llm_client, temp_workspace):
+def test_session_history_management(mock_llm_client, temp_workspace, mini_agent_home):
     """Test session history management"""
+    writer = _make_writer(temp_workspace)
     agent = Agent(
         llm_client=mock_llm_client,
         system_prompt="System prompt",
         tools=[],
         workspace_dir=temp_workspace,
+        session_writer=writer,
     )
 
     # Add multiple messages
@@ -95,13 +113,15 @@ def test_session_history_management(mock_llm_client, temp_workspace):
     assert agent.messages[0].role == "system"
 
 
-def test_get_history(mock_llm_client, temp_workspace):
+def test_get_history(mock_llm_client, temp_workspace, mini_agent_home):
     """Test getting session history"""
+    writer = _make_writer(temp_workspace)
     agent = Agent(
         llm_client=mock_llm_client,
         system_prompt="System",
         tools=[],
         workspace_dir=temp_workspace,
+        session_writer=writer,
     )
 
     # Add message
@@ -120,13 +140,15 @@ def test_get_history(mock_llm_client, temp_workspace):
     assert len(history) == 3  # Copy changed
 
 
-def test_message_statistics(mock_llm_client, temp_workspace):
+def test_message_statistics(mock_llm_client, temp_workspace, mini_agent_home):
     """Test message statistics functionality"""
+    writer = _make_writer(temp_workspace)
     agent = Agent(
         llm_client=mock_llm_client,
         system_prompt="System",
         tools=[],
         workspace_dir=temp_workspace,
+        session_writer=writer,
     )
 
     # Add different types of messages

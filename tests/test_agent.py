@@ -9,6 +9,7 @@ import pytest
 from mini_agent import LLMClient
 from mini_agent.agent import Agent
 from mini_agent.config import Config
+from mini_agent.session.writer import SessionWriter
 from mini_agent.tools import BashTool, EditTool, ReadTool, WriteTool
 
 
@@ -47,22 +48,33 @@ async def test_agent_simple_task():
             BashTool(),
         ]
 
-        # Create agent
-        agent = Agent(
-            llm_client=llm_client,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_steps=10,  # Limit steps for testing
-            workspace_dir=workspace_dir,
+        # Initialize session writer
+        writer = SessionWriter(
+            session_id=f"test-{workspace_dir[-8:]}",
+            cwd=workspace_dir,
+            workspace=workspace_dir,
+            model=config.llm.model,
+            cli_args={},
         )
-
-        # Task: Create a simple text file
-        task = "Create a file named 'test.txt' with the content 'Hello from Agent!'"
-        print(f"\nTask: {task}\n")
-
-        agent.add_user_message(task)
+        writer.open()
 
         try:
+            # Create agent
+            agent = Agent(
+                llm_client=llm_client,
+                system_prompt=system_prompt,
+                tools=tools,
+                max_steps=10,  # Limit steps for testing
+                workspace_dir=workspace_dir,
+                session_writer=writer,
+            )
+
+            # Task: Create a simple text file
+            task = "Create a file named 'test.txt' with the content 'Hello from Agent!'"
+            print(f"\nTask: {task}\n")
+
+            agent.add_user_message(task)
+
             result = await agent.run()
 
             print(f"\n{'=' * 80}")
@@ -92,6 +104,8 @@ async def test_agent_simple_task():
 
             traceback.print_exc()
             return False
+        finally:
+            writer.close()
 
 
 @pytest.mark.asyncio
@@ -128,22 +142,33 @@ async def test_agent_bash_task():
             BashTool(),
         ]
 
-        # Create agent
-        agent = Agent(
-            llm_client=llm_client,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_steps=10,
-            workspace_dir=workspace_dir,
+        # Initialize session writer
+        writer = SessionWriter(
+            session_id=f"test-{workspace_dir[-8:]}",
+            cwd=workspace_dir,
+            workspace=workspace_dir,
+            model=config.llm.model,
+            cli_args={},
         )
-
-        # Task: List files using bash
-        task = "Use bash to list all files in the current directory and tell me what you find."
-        print(f"\nTask: {task}\n")
-
-        agent.add_user_message(task)
+        writer.open()
 
         try:
+            # Create agent
+            agent = Agent(
+                llm_client=llm_client,
+                system_prompt=system_prompt,
+                tools=tools,
+                max_steps=10,
+                workspace_dir=workspace_dir,
+                session_writer=writer,
+            )
+
+            # Task: List files using bash
+            task = "Use bash to list all files in the current directory and tell me what you find."
+            print(f"\nTask: {task}\n")
+
+            agent.add_user_message(task)
+
             result = await agent.run()
 
             print(f"\n{'=' * 80}")
@@ -159,6 +184,8 @@ async def test_agent_bash_task():
 
             traceback.print_exc()
             return False
+        finally:
+            writer.close()
 
 
 async def main():

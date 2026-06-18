@@ -4,13 +4,15 @@ import asyncio
 import json
 from pathlib import Path
 from time import perf_counter
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import tiktoken
 
 from .llm import LLMClient
-from .logger import AgentLogger
 from .schema import Message
+
+if TYPE_CHECKING:
+    from .session.writer import SessionWriter
 from .tools.base import ConfirmationRequired, Tool, ToolResult
 from .utils import calculate_display_width
 
@@ -54,6 +56,7 @@ class Agent:
         workspace_dir: str = "./workspace",
         token_limit: int = 80000,  # Summary triggered when tokens exceed this value
         memory_context: str = "",
+        session_writer: "SessionWriter | None" = None,
     ):
         self.llm = llm_client
         self.tools = {tool.name: tool for tool in tools}
@@ -80,9 +83,15 @@ class Agent:
         # Initialize message history
         self.messages: list[Message] = [Message(role="system", content=system_prompt)]
 
-        # Initialize logger (creates one log file for the whole session)
-        self.logger = AgentLogger()
-        print(f"{Colors.DIM}📝 Log file: {self.logger.get_log_file_path()}{Colors.RESET}")
+        # SessionWriter is required — replaces the old AgentLogger
+        if session_writer is None:
+            raise ValueError(
+                "session_writer is required. Construct a SessionWriter before Agent."
+            )
+        self.session = session_writer
+        # _message_seqs tracks seq numbers parallel to self.messages[1:]
+        # (system prompt at index 0 is NOT persisted, so _message_seqs[0] ↔ messages[1])
+        self._message_seqs: list[int] = []
 
         # Token usage from last API response (updated after each LLM call)
         self.api_total_tokens: int = 0
@@ -98,6 +107,8 @@ class Agent:
     def add_user_message(self, content: str):
         """Add a user message to history."""
         self.messages.append(Message(role="user", content=content))
+        seq = self.session.append_user_message(content)
+        self._message_seqs.append(seq)
 
     def _check_cancelled(self) -> bool:
         """Check if agent execution has been cancelled.
@@ -129,6 +140,9 @@ class Agent:
         # Remove the last assistant message and all tool results after it
         removed_count = len(self.messages) - last_assistant_idx
         if removed_count > 0:
+            # Trim _message_seqs to match (messages[i] ↔ _message_seqs[i-1])
+            # Keep seqs up to index last_assistant_idx - 1 (exclusive)
+            self._message_seqs = self._message_seqs[: last_assistant_idx - 1]
             self.messages = self.messages[:last_assistant_idx]
             print(f"{Colors.DIM}   Cleaned up {removed_count} incomplete message(s){Colors.RESET}")
 
@@ -216,6 +230,8 @@ class Agent:
         if not should_summarize:
             return
 
+        tokens_before = estimated_tokens  # capture for summary_event
+
         print(
             f"\n{Colors.BRIGHT_YELLOW}📊 Token usage - Local estimate: {estimated_tokens}, API reported: {self.api_total_tokens}, Limit: {self.token_limit}{Colors.RESET}"
         )
@@ -229,14 +245,21 @@ class Agent:
             print(f"{Colors.BRIGHT_YELLOW}⚠️  Insufficient messages, cannot summarize{Colors.RESET}")
             return
 
-        # Build new message list
+        # Build new message list, tracking seqs
+        # NOTE: self.messages[0] = system prompt (NOT in _message_seqs).
+        # self.messages[i] for i >= 1 corresponds to _message_seqs[i-1].
         new_messages = [self.messages[0]]  # Keep system prompt
+        new_seqs: list[int] = []
         summary_count = 0
+        summary_events: list[tuple[list[int], int]] = []  # (summarized_seqs, summary_seq)
 
         # Iterate through each user message and summarize the execution process after it
         for i, user_idx in enumerate(user_indices):
             # Add current user message
             new_messages.append(self.messages[user_idx])
+            # Track its seq (messages[user_idx] ↔ _message_seqs[user_idx - 1])
+            if user_idx - 1 < len(self._message_seqs):
+                new_seqs.append(self._message_seqs[user_idx - 1])
 
             # Determine message range to summarize
             # If last user, go to end of message list; otherwise to before next user
@@ -248,23 +271,50 @@ class Agent:
             # Extract execution messages for this round
             execution_messages = self.messages[user_idx + 1 : next_user_idx]
 
+            # Collect seqs of execution messages that will be summarized
+            # messages[user_idx+1 .. next_user_idx-1] ↔ _message_seqs[user_idx .. next_user_idx-2]
+            exec_msg_indices = range(user_idx + 1, next_user_idx)
+            summarized_seqs = [
+                self._message_seqs[idx - 1]
+                for idx in exec_msg_indices
+                if idx - 1 < len(self._message_seqs)
+            ]
+
             # If there are execution messages in this round, summarize them
             if execution_messages:
                 summary_text = await self._create_summary(execution_messages, i + 1)
                 if summary_text:
+                    summary_content = f"[Assistant Execution Summary]\n\n{summary_text}"
                     summary_message = Message(
                         role="user",
-                        content=f"[Assistant Execution Summary]\n\n{summary_text}",
+                        content=summary_content,
                     )
                     new_messages.append(summary_message)
+                    # Persist the summary message to session and get its seq
+                    summary_seq = self.session.append_user_message(summary_content)
+                    new_seqs.append(summary_seq)
+                    if summarized_seqs:
+                        summary_events.append((summarized_seqs, summary_seq))
                     summary_count += 1
 
-        # Replace message list
+        # Replace message list and seqs
         self.messages = new_messages
+        self._message_seqs = new_seqs
 
         # Skip next token check to avoid consecutive summary triggers
         # (api_total_tokens will be updated after next LLM call)
         self._skip_next_token_check = True
+
+        # Write summary_events AFTER self.messages is replaced
+        if summary_events:
+            tokens_after = self._estimate_tokens()
+            for summarized_seqs, summary_seq in summary_events:
+                self.session.append_summary_event(
+                    summarized_seqs=summarized_seqs,
+                    summary_seq=summary_seq,
+                    tokens_before=tokens_before,
+                    tokens_after=tokens_after,
+                )
 
         new_tokens = self._estimate_tokens()
         print(f"{Colors.BRIGHT_GREEN}✓ Summary completed, local tokens: {estimated_tokens} → {new_tokens}{Colors.RESET}")
@@ -345,9 +395,6 @@ Requirements:
         if cancel_event is not None:
             self.cancel_event = cancel_event
 
-        # Start a new run section within the session log file
-        self.logger.start_new_run_section()
-
         step = 0
         run_start_time = perf_counter()
 
@@ -376,9 +423,7 @@ Requirements:
             # Get tool list for LLM call
             tool_list = list(self.tools.values())
 
-            # Log LLM request and call LLM with Tool objects directly
-            self.logger.log_request(messages=self.messages, tools=tool_list)
-
+            # Call LLM with Tool objects directly
             try:
                 response = await self.llm.generate(messages=self.messages, tools=tool_list)
             except Exception as e:
@@ -397,14 +442,6 @@ Requirements:
             if response.usage:
                 self.api_total_tokens = response.usage.total_tokens
 
-            # Log LLM response
-            self.logger.log_response(
-                content=response.content,
-                thinking=response.thinking,
-                tool_calls=response.tool_calls,
-                finish_reason=response.finish_reason,
-            )
-
             # Add assistant message
             assistant_msg = Message(
                 role="assistant",
@@ -413,6 +450,17 @@ Requirements:
                 tool_calls=response.tool_calls,
             )
             self.messages.append(assistant_msg)
+
+            # Persist assistant message to session and track seq
+            seq = self.session.append_assistant_message(
+                content=response.content,
+                thinking=response.thinking,
+                tool_calls=(
+                    [tc.model_dump() for tc in response.tool_calls]
+                    if response.tool_calls else None
+                ),
+            )
+            self._message_seqs.append(seq)
 
             # Print thinking if present
             if response.thinking:
@@ -487,15 +535,6 @@ Requirements:
                             error=f"Tool execution failed: {error_detail}\n\nTraceback:\n{error_trace}",
                         )
 
-                # Log tool execution result
-                self.logger.log_tool_result(
-                    tool_name=function_name,
-                    arguments=arguments,
-                    result_success=result.success,
-                    result_content=result.content if result.success else None,
-                    result_error=result.error if not result.success else None,
-                )
-
                 # Print result
                 if result.success:
                     result_text = result.content
@@ -513,6 +552,14 @@ Requirements:
                     name=function_name,
                 )
                 self.messages.append(tool_msg)
+
+                # Persist tool result to session and track seq
+                tool_seq = self.session.append_tool_result(
+                    tool_call_id=tool_call_id,
+                    name=function_name,
+                    content=result.content if result.success else f"Error: {result.error}",
+                )
+                self._message_seqs.append(tool_seq)
 
                 # Check for cancellation after each tool execution
                 if self._check_cancelled():

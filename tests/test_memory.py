@@ -1,11 +1,11 @@
 """Test cases for MemoryManager."""
 
-import hashlib
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from mini_agent.paths import encode_cwd
 from mini_agent.tools.memory_manager import MemoryManager
 
 
@@ -15,13 +15,15 @@ def temp_workspace(tmp_path):
     return tmp_path / "test_project"
 
 
-def test_resolve_memory_dir(temp_workspace):
-    """Test memory directory path resolution with hash suffix."""
+def test_resolve_memory_dir(temp_workspace, mini_agent_home):
+    """Test memory directory path resolution uses encoded-cwd (not hash8)."""
     temp_workspace.mkdir()
     manager = MemoryManager(temp_workspace)
 
-    hash8 = hashlib.sha256(str(temp_workspace).encode()).hexdigest()[:8]
-    expected = Path.home() / ".mini-agent" / "projects" / f"test_project_{hash8}" / "memory"
+    expected = (
+        mini_agent_home / ".mini-agent" / "projects"
+        / encode_cwd(str(temp_workspace)) / "memory"
+    )
     assert manager.memory_dir == expected
 
 

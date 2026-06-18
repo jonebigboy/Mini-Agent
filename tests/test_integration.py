@@ -9,12 +9,13 @@ import pytest
 from mini_agent import LLMClient
 from mini_agent.agent import Agent
 from mini_agent.config import Config
+from mini_agent.session.writer import SessionWriter
 from mini_agent.tools import BashTool, EditTool, ReadTool, WriteTool
 from mini_agent.tools.mcp_loader import load_mcp_tools_async
 
 
 @pytest.mark.asyncio
-async def test_basic_agent_usage():
+async def test_basic_agent_usage(mini_agent_home):
     """Test basic agent usage with file creation task.
 
     This is the integration test for basic agent functionality,
@@ -75,25 +76,37 @@ async def test_basic_agent_usage():
             print(f"⚠️  MCP tools not loaded: {e}")
 
         # Create agent
-        agent = Agent(
-            llm_client=llm_client,
-            system_prompt=system_prompt,
-            tools=tools,
-            max_steps=config.agent.max_steps,
-            workspace_dir=workspace_dir,
+        writer = SessionWriter(
+            session_id=f"integration-{workspace_dir[-8:]}",
+            cwd=workspace_dir,
+            workspace=workspace_dir,
+            model=config.llm.model,
+            cli_args={},
         )
+        writer.open()
+        try:
+            agent = Agent(
+                llm_client=llm_client,
+                system_prompt=system_prompt,
+                tools=tools,
+                max_steps=config.agent.max_steps,
+                workspace_dir=workspace_dir,
+                session_writer=writer,
+            )
 
-        # Task: Create a Python file with hello world
-        task = """
-        Create a Python file named hello.py in the workspace that prints "Hello, Mini Agent!".
-        Then execute it to verify it works.
-        """
+            # Task: Create a Python file with hello world
+            task = """
+            Create a Python file named hello.py in the workspace that prints "Hello, Mini Agent!".
+            Then execute it to verify it works.
+            """
 
-        print(f"\nTask: {task}")
-        print("\n" + "=" * 80 + "\n")
+            print(f"\nTask: {task}")
+            print("\n" + "=" * 80 + "\n")
 
-        agent.add_user_message(task)
-        result = await agent.run()
+            agent.add_user_message(task)
+            result = await agent.run()
+        finally:
+            writer.close()
 
         print("\n" + "=" * 80)
         print(f"Result: {result}")

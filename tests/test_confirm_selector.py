@@ -74,23 +74,33 @@ def test_selector_render_highlights_selected():
 
 
 @pytest.mark.asyncio
-async def test_resolve_confirmation_with_feedback():
+async def test_resolve_confirmation_with_feedback(mini_agent_home, tmp_path):
     """当 resolve_confirmation 传入 feedback 时，拒绝的 ToolResult
     应包含反馈文字。"""
     from unittest.mock import AsyncMock, MagicMock
 
     from mini_agent.agent import Agent
     from mini_agent.llm.llm_wrapper import LLMClient
+    from mini_agent.session.writer import SessionWriter
     from mini_agent.tools.base import ConfirmationRequired, ToolResult
 
     llm = MagicMock(spec=LLMClient)
     llm.generate = AsyncMock()
+    writer = SessionWriter(
+        session_id="confirm-test-1",
+        cwd=str(tmp_path),
+        workspace=str(tmp_path),
+        model="test",
+        cli_args={},
+    )
+    writer.open()
     agent = Agent(
         llm_client=llm,
         tools=[],
         system_prompt="test",
-        workspace_dir="/tmp",
+        workspace_dir=str(tmp_path),
         max_steps=1,
+        session_writer=writer,
     )
 
     req = ConfirmationRequired(command="sudo apt update", reason="命令需要确认")
@@ -112,22 +122,32 @@ async def test_resolve_confirmation_with_feedback():
 
 
 @pytest.mark.asyncio
-async def test_resolve_confirmation_deny_without_feedback():
+async def test_resolve_confirmation_deny_without_feedback(mini_agent_home, tmp_path):
     """当 resolve_confirmation 不传 feedback 时，为简单拒绝。"""
     from unittest.mock import AsyncMock, MagicMock
 
     from mini_agent.agent import Agent
     from mini_agent.llm.llm_wrapper import LLMClient
+    from mini_agent.session.writer import SessionWriter
     from mini_agent.tools.base import ConfirmationRequired, ToolResult
 
     llm = MagicMock(spec=LLMClient)
     llm.generate = AsyncMock()
+    writer = SessionWriter(
+        session_id="confirm-test-2",
+        cwd=str(tmp_path),
+        workspace=str(tmp_path),
+        model="test",
+        cli_args={},
+    )
+    writer.open()
     agent = Agent(
         llm_client=llm,
         tools=[],
         system_prompt="test",
-        workspace_dir="/tmp",
+        workspace_dir=str(tmp_path),
         max_steps=1,
+        session_writer=writer,
     )
 
     req = ConfirmationRequired(command="rm -rf /tmp/test", reason="危险命令")

@@ -37,6 +37,7 @@ from mini_agent.config import Config
 from mini_agent.llm import LLMClient
 from mini_agent.retry import RetryConfig as RetryConfigBase
 from mini_agent.schema import Message
+from mini_agent.session.writer import SessionWriter
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,22 @@ class MiniMaxACPAgent:
             workspace = workspace.resolve()
         tools = list(self._base_tools)
         add_workspace_tools(tools, self._config, workspace)
-        agent = Agent(llm_client=self._llm, system_prompt=self._system_prompt, tools=tools, max_steps=self._config.agent.max_steps, workspace_dir=str(workspace))
+        writer = SessionWriter(
+            session_id=session_id,
+            cwd=str(workspace),
+            workspace=str(workspace),
+            model=self._config.llm.model,
+            cli_args={},
+        )
+        writer.open()
+        agent = Agent(
+            llm_client=self._llm,
+            system_prompt=self._system_prompt,
+            tools=tools,
+            max_steps=self._config.agent.max_steps,
+            workspace_dir=str(workspace),
+            session_writer=writer,
+        )
         self._sessions[session_id] = SessionState(agent=agent)
         return NewSessionResponse(sessionId=session_id)
 

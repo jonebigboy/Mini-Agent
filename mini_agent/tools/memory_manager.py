@@ -4,7 +4,6 @@ Manages per-project memory files stored at ~/.mini-agent/projects/<path>/memory/
 Inspired by Claude Code's memory system.
 """
 
-import hashlib
 import subprocess
 from pathlib import Path
 
@@ -55,13 +54,12 @@ class MemoryManager:
     def _resolve_memory_dir(self) -> Path:
         """Resolve the per-project memory directory.
 
-        Uses project_root (git repo root or workspace_dir) as the identity key.
-        Path: ~/.mini-agent/projects/<name>_<hash8>/memory/
+        Uses encoded-cwd path: ~/.mini-agent/projects/<encoded-cwd>/memory/
+        Migration from the legacy <name>_<hash8> format is handled by
+        mini_agent.session.migrate on first startup of the new version.
         """
-        path_str = str(self.project_root)
-        name = self.project_root.name or "root"
-        hash8 = hashlib.sha256(path_str.encode()).hexdigest()[:8]
-        return Path.home() / ".mini-agent" / "projects" / f"{name}_{hash8}" / "memory"
+        from ..paths import memory_dir
+        return memory_dir(str(self.project_root))
 
     def ensure_memory_dir(self) -> Path:
         """Create memory directory if it doesn't exist."""
